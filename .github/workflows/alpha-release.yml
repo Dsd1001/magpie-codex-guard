@@ -1,7 +1,7 @@
 name: Build Codex Guard Alpha Release
 on:
   push:
-    branches: [main, 'release/native-route-alpha8']
+    branches: [main]
     paths:
       - '.github/workflows/alpha-release.yml'
       - 'cmd/**'
@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Account-only Codex Guard alpha.8 backend: fix Magpie HTTP 404 by probing native codex/* models with X-Magpie-Account and removing obsolete probe alias/middleware rewrites. Keep automatic quarantine off pending live validation."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard: fixed HTTP 404 in account probes by using native Codex model IDs and X-Magpie-Account, removed stale probe alias rewrites. Keep automatic quarantine off until real-account review."

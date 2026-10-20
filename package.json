@@ -1,6 +1,6 @@
 {
   "name": "magpie-codex-guard",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "type": "module",
   "main": "./plugin/index.mjs",
   "description": "Account-scoped Codex quality probes, local model fingerprints and safe Magpie Gateway Key quarantine.",
