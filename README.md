@@ -36,7 +36,27 @@ Magpie 的 Gateway Key 账号白名单遵循 **“空列表允许全部账号”
 
 只有**通过受管理的 Gateway Key** 进入的业务 API 会受到限制。绕过这些 Key 的直连、未管理的 API 入口不受本插件保证。
 
-## 安装与构建（开发阶段）
+## 直接在 Magpie 中安装（GitHub）
+
+在 **Magpie → 设置 → 插件** 页面底部的「已有想装的？」输入框中粘贴：
+
+```text
+github:Dsd1001/magpie-codex-guard
+```
+
+点击「安装」。也可在运行 Magpie 的环境里使用：
+
+```sh
+magpie plugin add github:Dsd1001/magpie-codex-guard
+```
+
+**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件会在首次启动时从 [v0.1.0-alpha.1 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.1) 自动下载所需的预编译程序，校验安装包及可执行文件的固定 SHA-256 后缓存到独立数据目录。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。**
+
+**生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
+
+**Docker 控制台限制：** 当前管理界面只监听插件所在容器的 `127.0.0.1`，GitHub 安装完成不等于公网浏览器可访问控制台。远程访问需要后续提供经过认证的安全入口；不要直接把该管理端口公开到公网。
+
+## 本地构建（开发阶段）
 
 当前工作目录：`sub2api/magpie-codex-guard`。
 

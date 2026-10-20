@@ -1,3 +1,4 @@
+# GitHub installation fetches the pinned release helper at first startup.
 /bin/
 /dist/
 /data/
