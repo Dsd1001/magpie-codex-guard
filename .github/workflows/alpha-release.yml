@@ -1,7 +1,7 @@
 name: Build Codex Guard Alpha Release
 on:
   push:
-    branches: [main, 'release/fingerprint-bank-alpha10']
+    branches: [main]
     paths:
       - '.github/workflows/alpha-release.yml'
       - 'cmd/**'
@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.10: fingerprint detection integrated with objective question bank. Independent manual fingerprint test, configurable after-failures/off/opt-in 24h periodic sampling, persisted schedules and reference model picker; fingerprint verdicts never count as objective failures. Keep production routing in observation mode until validated."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.11: unified objective and fingerprint question bank, independently scored three-sample manual fingerprint testing, opt-in scheduled periodic fingerprint checks, SHA-pinned alpha.10 Go backend, backwards-compatible default quarantine policy. Do not turn on production auto-routing before live validation."
