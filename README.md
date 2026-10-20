@@ -1,8 +1,5 @@
 # Magpie Codex Guard
 
-> 独立的 Codex 账号质量检测与路由隔离插件。**当前是 alpha 开发版；尚未经过 sub2 线上兼容性和真实账号指纹阈值验证，不应直接替换生产插件。**
-
-本项目独立初始化 Git 仓库，**不是 GitHub Fork**。基于原 [Magpie Account Intelligence Check](https://github.com/mu-zi-lee/magpie-intelligence-check) 的 MIT 许可代码精简重构；本地指纹评分算法依据 [Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector) 的 MIT 许可实现。分别保留了原版权声明。
 
 ## 只做 Codex 账号检测
 
