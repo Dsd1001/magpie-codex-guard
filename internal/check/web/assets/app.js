@@ -1,6 +1,8 @@
 const $=id=>document.getElementById(id);
 let current=null;
 let models=[];
+let modelsLoading=true;
+let modelsError='';
 let editingPrompt='';
 const stateLabels={
  passed:['正常','ok'], suspect:['疑似异常','low'], checking:['检测中','pending'],
@@ -78,8 +80,13 @@ function renderSummary(){
 function renderSelectors(){
  option($('accountSelect'),accounts().map(a=>[a.id,a.user]),'选择账号邮箱');
  option($('historyAccount'),accounts().map(a=>[a.id,a.user]),'全部账号');
- option($('modelSelect'),models.map(m=>[m.id,m.id]),models.length?'选择检测模型':'先保存网关连接，再加载模型');
+ option($('modelSelect'),models.map(m=>[m.id,m.id]),models.length?'选择检测模型':modelsLoading?'正在从 Magpie 读取模型…':'没有可选模型');
  option($('probeKey'),(current.keys||[]).map(k=>[k.id,k.name||'未命名检测 Key']),'选择专用检测 Key');
+ const help=$('modelHelp');
+ help.textContent=modelsLoading?'正在从 Magpie 本机读取 Codex 模型…':modelsError?'模型加载失败：'+modelsError+'。请检查 Magpie 的模型配置后点击右上角「刷新」。':models.length?`已读取 Magpie 的 ${models.length} 个 Codex 模型。${current?.gateway_configured?'检测连接已配置。':'可以先添加监测目标；实际检测前还需在「设置与路由」配置独立检测 Gateway Key。'}`:'没有找到可用的 Codex 模型。';
+ help.classList.toggle('error',Boolean(modelsError));
+ $('addAccount').disabled=!models.length;
+ $('addAll').disabled=!models.length;
 }
 function accountButton(label,cb,cls='small'){
  const b=elem('button',cls,label);
@@ -93,7 +100,7 @@ function renderAccounts(){
  const targets=Object.values(s.account_targets||{}).sort((a,b)=>email(a.account).localeCompare(email(b.account)));
  const holds=s.holds||{};
  if(!targets.length){
-  const td=elem('td','empty','尚未添加 Codex 账号。先完成连接配置，然后选择账号或添加全部。');
+  const td=elem('td','empty','尚未添加 Codex 监测目标。先选择账号和模型，再点击「添加监测」。');
   td.colSpan=5;const tr=elem('tr');tr.append(td);tbody.append(tr);return;
  }
  for(const t of targets){
@@ -209,14 +216,25 @@ async function refresh(){
  renderSettings();
 }
 async function loadModels(){
- try{models=await api('/api/models');renderSelectors()}catch{models=[]}
+ modelsLoading=true;modelsError='';renderSelectors();
+ try{
+  const result=await api('/api/models');
+  if(!Array.isArray(result))throw Error('模型列表响应格式错误');
+  models=result.filter(m=>m&&typeof m.id==='string'&&/^codex\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(m.id));
+  modelsError=models.length?'':'本机 Magpie 未提供可用的 Codex 模型';
+ }catch(e){models=[];modelsError=e?.message||'未知错误'}
+ modelsLoading=false;renderSelectors();
+ return !modelsError;
 }
 function selectTab(tab){
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
  for(const section of document.querySelectorAll('.page'))section.hidden=section.id!==tab;
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>selectTab(b.dataset.tab));
-$('refresh').onclick=()=>action(refresh);
+$('refresh').onclick=()=>action(async()=>{
+ await refresh();
+ if(!(await loadModels()))throw Error('模型加载失败：'+modelsError);
+});
 $('addAccount').onclick=()=>action(async()=>{
  const account=$('accountSelect').value,model=$('modelSelect').value;
  if(!account||!model)throw Error('请选择账号邮箱和检测模型');
@@ -248,11 +266,15 @@ $('saveCustom').onclick=()=>action(async()=>{
  editingPrompt='';$('saveCustom').textContent='创建题目';
  for(const id of ['customName','customText','customGuidance','customAnswers'])$(id).value='';
 });
-$('saveConfig').onclick=()=>action(async()=>{
- await api('/api/config','POST',{gateway_url:$('gatewayURL').value,gateway_key:$('gatewayKey').value,daily_limit:Number($('dailyLimit').value)});
- $('gatewayKey').value='';
- await loadModels();
-});
+$('saveConfig').onclick=async()=>{
+ try{
+  await api('/api/config','POST',{gateway_url:$('gatewayURL').value,gateway_key:$('gatewayKey').value,daily_limit:Number($('dailyLimit').value)});
+  $('gatewayKey').value='';
+  await refresh();
+  const loaded=await loadModels();
+  notice(loaded?'检测连接已保存，模型列表已刷新':'检测连接已保存，但模型加载失败：'+modelsError,!loaded);
+ }catch(e){notice('保存检测连接失败：'+(e?.message||String(e)),true)}
+};
 $('saveRoute').onclick=()=>action(async()=>{
  const auto=$('enableRouting').checked;
  const body={

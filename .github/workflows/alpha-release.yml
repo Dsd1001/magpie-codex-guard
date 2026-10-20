@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Account-only Codex Guard alpha.4. Reuses the proven Go Cloudflare console and one-time login from the previous plugin. Verify in observation mode before enabling production routing."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Account-only Codex Guard. Uses the proven Go Cloudflare console and a read-only Magpie Codex model catalog; model selection does not require a Gateway Key. Test in observation mode before enabling production routing."

@@ -94,6 +94,9 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 	})
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		state, health := s.Snapshot()
+		s.mu.Lock()
+		gatewayReady := s.state.Config.GatewayURL != "" && s.state.Config.GatewayKey != ""
+		s.mu.Unlock()
 		dir, err := MagpieDir()
 		accounts := []CodexAccount{}
 		discoveryError := ""
@@ -107,7 +110,7 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		if kerr != nil {
 			keys = []GatewayKeyLabel{}
 		}
-		writeJSON(w, map[string]any{"state": state, "health": health, "accounts": accounts, "discovery_error": discoveryError, "keys": keys, "prompts": s.PromptCatalog(), "routing_error": func() string {
+		writeJSON(w, map[string]any{"state": state, "health": health, "gateway_configured": gatewayReady, "accounts": accounts, "discovery_error": discoveryError, "keys": keys, "prompts": s.PromptCatalog(), "routing_error": func() string {
 			if kerr != nil {
 				return kerr.Error()
 			}
@@ -118,9 +121,9 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		s.mu.Lock()
 		cfg := s.state.Config
 		s.mu.Unlock()
-		models, err := Models(r.Context(), cfg)
+		models, err := AvailableCodexModels(r.Context(), cfg)
 		if err != nil {
-			apiError(w, err, 502)
+			apiError(w, err, http.StatusServiceUnavailable)
 			return
 		}
 		writeJSON(w, models)
