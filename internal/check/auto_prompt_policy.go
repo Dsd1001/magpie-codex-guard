@@ -10,15 +10,29 @@ import (
 // Configured distinguishes existing installs (legacy: all eligible prompts
 // rotate) from an explicitly saved allowlist.
 type AutoPromptPolicy struct {
-	Configured bool     `json:"configured"`
-	Rotate     bool     `json:"rotate"`
-	PromptIDs  []string `json:"prompt_ids"`
+	Configured      bool     `json:"configured"`
+	Rotate          bool     `json:"rotate"`
+	PromptIDs       []string `json:"prompt_ids"`
+	FingerprintMode string   `json:"fingerprint_mode"` // after_failures | periodic_24h | off
+}
+
+const (
+	FingerprintOnFailure = "after_failures"
+	FingerprintPeriodic  = "periodic_24h"
+	FingerprintOff       = "off"
+)
+
+func effectiveFingerprintMode(mode string) string {
+	if mode == "" {
+		return FingerprintOnFailure
+	}
+	return mode
 }
 
 func (s *Service) eligibleAutoPromptsLocked() []Prompt {
 	var prompts []Prompt
 	for _, prompt := range Prompts {
-		if prompt.Automatic {
+		if prompt.Automatic && prompt.Kind != "fingerprint" {
 			prompts = append(prompts, prompt)
 		}
 	}
@@ -35,7 +49,8 @@ func (s *Service) effectiveAutoPromptPolicyLocked() AutoPromptPolicy {
 	if policy.Configured {
 		return AutoPromptPolicy{
 			Configured: true, Rotate: policy.Rotate,
-			PromptIDs: slices.Clone(policy.PromptIDs),
+			PromptIDs:       slices.Clone(policy.PromptIDs),
+			FingerprintMode: effectiveFingerprintMode(policy.FingerprintMode),
 		}
 	}
 	// Backward compatible: existing installations still use all enabled
@@ -45,7 +60,7 @@ func (s *Service) effectiveAutoPromptPolicyLocked() AutoPromptPolicy {
 	for _, prompt := range eligible {
 		ids = append(ids, prompt.ID)
 	}
-	return AutoPromptPolicy{Configured: false, Rotate: true, PromptIDs: ids}
+	return AutoPromptPolicy{Configured: false, Rotate: true, PromptIDs: ids, FingerprintMode: effectiveFingerprintMode(policy.FingerprintMode)}
 }
 
 func (s *Service) AutoPromptSettings() AutoPromptPolicy {
@@ -94,11 +109,27 @@ func (s *Service) resetAutoPromptStreaksLocked() map[string]AccountTarget {
 // ConfigureAutoPrompts validates every selected ID server-side. Manual-only,
 // deleted or malformed questions can never enter the automatic quarantine
 // scheduler even when a client bypasses the browser UI.
+// ConfigureAutoPrompts retains compatibility with callers that only change
+// objective questions. They never silently disable fingerprint quarantine.
 func (s *Service) ConfigureAutoPrompts(ids []string, rotate bool) error {
+	return s.ConfigureDetectionPrompts(ids, rotate, "")
+}
+
+// Fingerprint policy is independent from objective grading: it can never
+// enter selectAutomaticPrompt or alter consecutive objective failure counts.
+func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerprintMode string) error {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.accountProbeActive || len(s.running) > 0 {
 		return errors.New("有检测正在运行，请结束后再更新自动检测题库")
+	}
+	current := s.effectiveAutoPromptPolicyLocked()
+	if fingerprintMode == "" {
+		fingerprintMode = current.FingerprintMode
+	}
+	if fingerprintMode != FingerprintOnFailure && fingerprintMode != FingerprintPeriodic && fingerprintMode != FingerprintOff {
+		return errors.New("无效的指纹检测触发模式")
 	}
 	available := s.eligibleAutoPromptsLocked()
 	if len(ids) == 0 {
@@ -121,20 +152,36 @@ func (s *Service) ConfigureAutoPrompts(ids []string, rotate bool) error {
 		}
 		seen[id] = true
 	}
-	current := s.effectiveAutoPromptPolicyLocked()
 	desired := AutoPromptPolicy{
-		Configured: true, Rotate: rotate,
-		PromptIDs: slices.Clone(ids),
+		Configured: true, Rotate: rotate, PromptIDs: slices.Clone(ids), FingerprintMode: fingerprintMode,
 	}
-	policyChanged := current.Rotate != desired.Rotate || !slices.Equal(current.PromptIDs, desired.PromptIDs)
-	if !policyChanged && s.state.AutoPromptPolicy.Configured {
+	objectiveChanged := current.Rotate != desired.Rotate || !slices.Equal(current.PromptIDs, desired.PromptIDs)
+	fingerprintChanged := current.FingerprintMode != desired.FingerprintMode
+	if !objectiveChanged && !fingerprintChanged && s.state.AutoPromptPolicy.Configured {
 		return nil
 	}
 	before := s.state.AutoPromptPolicy
-	s.state.AutoPromptPolicy = desired
 	var targets map[string]AccountTarget
-	if policyChanged {
+	if objectiveChanged {
 		targets = s.resetAutoPromptStreaksLocked()
+	} else if fingerprintChanged {
+		targets = make(map[string]AccountTarget, len(s.state.AccountTargets))
+		for id, t := range s.state.AccountTargets {
+			if t != nil {
+				targets[id] = *t
+			}
+		}
+	}
+	s.state.AutoPromptPolicy = desired
+	// Enabling a periodic job does not cause an immediate burst of 3 requests
+	// per target. It becomes due after 24 hours, persisted across restarts.
+	if fingerprintChanged && desired.FingerprintMode == FingerprintPeriodic {
+		next := time.Now().Add(24 * time.Hour)
+		for _, t := range s.state.AccountTargets {
+			if t != nil {
+				t.NextFingerprintAt = next
+			}
+		}
 	}
 	if err := s.store.Save(s.state); err != nil {
 		s.state.AutoPromptPolicy = before

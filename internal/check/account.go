@@ -36,6 +36,9 @@ func (s *Service) SetAccountTarget(account, model string, enabled bool) error {
 	target := s.state.AccountTargets[id]
 	if target == nil {
 		target = &AccountTarget{Account: stable, Model: model, State: "unverified", Enabled: enabled}
+		if s.effectiveAutoPromptPolicyLocked().FingerprintMode == FingerprintPeriodic {
+			target.NextFingerprintAt = time.Now().Add(24 * time.Hour)
+		}
 		s.state.AccountTargets[id] = target
 	}
 	if _, held := s.state.Holds[stable]; held && !enabled {
@@ -91,7 +94,11 @@ func (s *Service) DiscoverAccountTargets(model string) (int, error) {
 	for _, a := range accounts {
 		id := accountTargetID(a.ID, model)
 		if s.state.AccountTargets[id] == nil {
-			s.state.AccountTargets[id] = &AccountTarget{Account: a.ID, Model: model, State: "unverified", Enabled: true}
+			target := &AccountTarget{Account: a.ID, Model: model, State: "unverified", Enabled: true}
+			if s.effectiveAutoPromptPolicyLocked().FingerprintMode == FingerprintPeriodic {
+				target.NextFingerprintAt = time.Now().Add(24 * time.Hour)
+			}
+			s.state.AccountTargets[id] = target
 			created = append(created, id)
 		}
 	}
@@ -104,6 +111,12 @@ func (s *Service) DiscoverAccountTargets(model string) (int, error) {
 	return len(created), nil
 }
 func (s *Service) TriggerAccount(account, model, prompt string, manual bool) error {
+	if prompt == FingerprintPromptID {
+		if !manual {
+			return errors.New("指纹检测不能计入客观题失败次数")
+		}
+		return s.TriggerFingerprint(account, model, true)
+	}
 	if err := ValidateAccount(account); err != nil {
 		return err
 	}
@@ -237,19 +250,10 @@ func (s *Service) routeHasHold(account string) bool {
 	defer s.mu.Unlock()
 	return s.state.Route.Quarantined[account] && !s.state.Route.Pending
 }
-func (s *Service) collectFingerprint(parent context.Context, account, model string) {
-	s.mu.Lock()
-	hold, ok := s.state.Holds[account]
-	if !ok || hold.Risk != "pending" {
-		s.mu.Unlock()
-		return
-	}
-	expected := model
-	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil && t.FingerprintExpected != "" {
-		expected = t.FingerprintExpected
-	}
-	runner := s.fingerprint
-	s.mu.Unlock()
+
+// sampleFingerprint collects 3 inputs and returns the existing local scorer
+// verdict. It does not change quarantine holds or objective failure counters.
+func (s *Service) sampleFingerprint(parent context.Context, account, model, expected string, runner FingerprintRunner) (FingerprintReport, string) {
 	challenges := newFingerprintChallenges()
 	batch := Secret()[:12]
 	outputs := []fingerprint.Output{}
@@ -263,7 +267,7 @@ func (s *Service) collectFingerprint(parent context.Context, account, model stri
 			answer, tokens, err = CallAccount(ctx, cfg, model, account, ch.Prompt)
 			cancel()
 		}
-		r := AccountResult{ID: Secret()[:12], Batch: batch, Account: account, Model: model, Prompt: "fingerprint-sample", PromptName: "模型指纹采样", Time: time.Now(), Answer: answer, Tokens: tokens, Verdict: "passed", ExpectedCount: ch.ExpectedCount}
+		r := AccountResult{ID: Secret()[:12], Batch: batch, Account: account, Model: model, Prompt: "fingerprint-sample", PromptName: "模型指纹采样", Time: time.Now(), Answer: answer, Tokens: tokens, Verdict: "sampled", ExpectedCount: ch.ExpectedCount}
 		if err != nil {
 			r.Verdict = "unavailable"
 			r.Error = err.Error()
@@ -292,6 +296,34 @@ func (s *Service) collectFingerprint(parent context.Context, account, model stri
 		if issue != "" {
 			report.Diagnostic = "采样失败：" + issue
 		}
+	}
+	return report, batch
+}
+
+func (s *Service) collectFingerprint(parent context.Context, account, model string) {
+	s.mu.Lock()
+	hold, ok := s.state.Holds[account]
+	if !ok || hold.Risk != "pending" {
+		s.mu.Unlock()
+		return
+	}
+	expected := model
+	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil && t.FingerprintExpected != "" {
+		expected = t.FingerprintExpected
+	}
+	runner := s.fingerprint
+	mode := s.effectiveAutoPromptPolicyLocked().FingerprintMode
+	s.mu.Unlock()
+	var report FingerprintReport
+	var batch string
+	if mode == FingerprintOff {
+		report = runner.Evaluate(nil, expected)
+		report.Verdict = "indeterminate"
+		report.UsedOutputs = 0
+		report.Diagnostic = "自动指纹检测已关闭；按低风险等待客观题复测"
+		batch = Secret()[:12]
+	} else {
+		report, batch = s.sampleFingerprint(parent, account, model, expected, runner)
 	}
 	now := time.Now()
 	s.mu.Lock()
@@ -359,6 +391,20 @@ func (s *Service) configureTargetFingerprint(account, model, expected string) er
 	if expected != "" {
 		if strings.ContainsAny(expected, "\r\n") || len(expected) > 128 {
 			return errors.New("指纹预期模型无效")
+		}
+		d, err := fingerprint.Load()
+		if err != nil {
+			return errors.New("指纹参考库无法加载")
+		}
+		allowed := false
+		for _, m := range d.Models() {
+			if m.ID == expected {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return errors.New("预期指纹模型不在参考库中")
 		}
 	}
 	s.mu.Lock()

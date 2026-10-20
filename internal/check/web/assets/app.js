@@ -4,6 +4,8 @@ let models=[];
 let modelsLoading=true;
 let modelsError='';
 let editingPrompt='';
+let fingerprintModels=[];
+let fingerprintModelsError='';
 const stateLabels={
  passed:['正常','ok'], suspect:['疑似异常','low'], checking:['检测中','pending'],
  unverified:['待检测','pending'], unavailable:['不可用','pending'],
@@ -119,7 +121,7 @@ function renderAccounts(){
   const due=elem('td','mono',fmtTime(hold?.next_check_at||t.next_check_at));
   const ops=elem('td');
   const bar=elem('div','actions-inline');
-  const test=accountButton('手动测试',()=>action(async()=>{await api('/api/account-test','POST',{account:t.account,model:t.model,prompt:chosenPrompt()})}));
+  const test=accountButton('手动测试',()=>submitManualTest(t.account,t.model,chosenPrompt()));
   const toggle=accountButton(t.enabled?'暂停检测':'启用检测',()=>action(async()=>{
    await api('/api/account-target','POST',{account:t.account,model:t.model,enabled:!t.enabled})
   }));
@@ -134,22 +136,25 @@ function renderAccounts(){
  }
 }
 function chosenPrompt(){
- const options=[...document.querySelectorAll('#promptOptions input:checked')];
- return options[0]?.value||'milk';
+ return $('manualPrompt').value||'milk';
 }
 function renderRules(){
  const s=current.state;
  const opts=$('promptOptions');opts.replaceChildren();
  const all=current.prompts||[];
  const policy=s.auto_prompt_policy||{};
- const chosen=new Set(policy.configured?policy.prompt_ids:all.filter(p=>p.automatic).map(p=>p.id));
- for(const p of all.filter(p=>p.automatic)){
+ const chosen=new Set(policy.configured?policy.prompt_ids:all.filter(p=>p.automatic&&p.kind!=='fingerprint').map(p=>p.id));
+ for(const p of all.filter(p=>p.automatic&&p.kind!=='fingerprint')){
   const l=elem('label','check');
   const input=elem('input');input.type='checkbox';input.value=p.id;input.checked=chosen.has(p.id);
   l.append(input,elem('span','',p.name));
   opts.append(l);
  }
  $('rotatePrompts').checked=Boolean(policy.rotate||!policy.configured);
+ const mode=policy.fingerprint_mode||'after_failures';
+ $('fingerprintAutomatic').checked=mode!=='off';
+ $('fingerprintMode').value=mode==='periodic_24h'?'periodic_24h':'after_failures';
+ $('fingerprintMode').disabled=mode==='off';
  const list=$('customList');list.replaceChildren();
  for(const p of (s.custom_prompts||[])){
   const wrap=elem('div','sub-row');
@@ -171,6 +176,48 @@ function renderRules(){
   list.append(wrap);
  }
 }
+function chosenManualTarget(){
+ const key=$('manualTarget').value;
+ return key?(current?.state?.account_targets||{})[key]:null;
+}
+function renderManual(){
+ const targets=Object.entries(current?.state?.account_targets||{}).filter(([,t])=>t.enabled);
+ option($('manualTarget'),targets.map(([key,t])=>[key,email(t.account)+' · '+t.model]),'选择已添加的监测目标');
+ if(!$('manualTarget').value&&targets.length===1)$('manualTarget').value=targets[0][0];
+ const promptList=(current?.prompts||[]).map(p=>[p.id,(p.kind==='fingerprint'?'指纹检测 · ':'客观题 · ')+p.name]);
+ option($('manualPrompt'),promptList,'选择检测题目');
+ if(!$('manualPrompt').value&&promptList.some(p=>p[0]==='milk'))$('manualPrompt').value='milk';
+ updateFingerprintExpected();
+}
+function updateFingerprintExpected(){
+ const t=chosenManualTarget();
+ option($('fingerprintExpected'),fingerprintModels.map(m=>[m.id,m.name||m.id]),'自动匹配当前 Codex 模型');
+ const desired=t?.fingerprint_expected||'';
+ if(desired&&fingerprintModels.some(m=>m.id===desired))$('fingerprintExpected').value=desired;
+ else if(!desired)$('fingerprintExpected').value='';
+ $('fingerprintExpectation').hidden=$('manualPrompt').value!=='model-fingerprint';
+ $('fingerprintModelHelp').textContent=fingerprintModelsError?
+  '参考模型加载失败：'+fingerprintModelsError:
+  '参考库提供 '+fingerprintModels.length+' 个候选模型。修改预期模型后需先保存；默认使用当前 Codex 模型的内置映射。';
+}
+async function loadFingerprintModels(){
+ try{
+  const values=await api('/api/fingerprint-models');
+  if(!Array.isArray(values))throw Error('参考模型列表格式无效');
+  fingerprintModels=values.filter(m=>m&&typeof m.id==='string');
+  fingerprintModelsError='';
+ }catch(e){fingerprintModels=[];fingerprintModelsError=e?.message||String(e)}
+ updateFingerprintExpected();
+}
+async function submitManualTest(account,model,prompt){
+ if(!account||!model||!prompt){notice('请先选择监测账号、模型和检测题目',true);return}
+ if(prompt==='model-fingerprint'&&!confirm('模型指纹检测将向指定账号发送 3 次请求，仅生成检测记录。确定执行？'))return;
+ try{
+  await api('/api/account-test','POST',{account,model,prompt});
+  notice(prompt==='model-fingerprint'?'已开始手动指纹检测（3 次采样）；结果会显示在检测记录，不改变隔离状态。':'已提交手动客观题检测；结果稍后显示在检测记录。');
+  await refresh();
+ }catch(e){notice('手动检测失败：'+(e?.message||String(e)),true)}
+}
 function renderHistory(){
  const records=(current.state.account_results||[]).slice().reverse();
  const account=$('historyAccount').value;
@@ -182,7 +229,7 @@ function renderHistory(){
   const sum=elem('summary');
   sum.append(elem('span','mono muted',stamp(r.time)),elem('strong','',email(r.account)),elem('span','muted',r.prompt_name||r.prompt));
   const verdict=elem('span',`pill ${r.verdict==='high'||r.verdict==='failed'?'high':r.verdict==='passed'?'ok':r.verdict==='low'?'low':'pending'}`,
-   ({passed:'通过',failed:'错误',unavailable:'不可用',high:'高风险',low:'低风险',manual:'人工评价'})[r.verdict]||r.verdict);
+   ({passed:'通过',failed:'错误',unavailable:'不可用',high:'高风险',low:'低风险',manual:'人工评价',sampled:'已采样（未判分）',match:'指纹一致',mismatch:'指纹不一致',indeterminate:'指纹不可判'})[r.verdict]||r.verdict);
   sum.append(verdict);
   details.append(sum);
   if(r.error)details.append(elem('p','hint',r.error));
@@ -212,6 +259,7 @@ async function refresh(){
  renderSelectors();
  renderAccounts();
  renderRules();
+ renderManual();
  renderHistory();
  renderSettings();
 }
@@ -246,10 +294,27 @@ $('addAll').onclick=()=>action(async()=>{
  if(!confirm('将所有已经登录的 Codex 账号加入该模型的监测列表？'))return;
  await api('/api/account-targets/discover','POST',{model,confirm:'ADD_ALL_CODEX_ACCOUNTS'});
 });
+$('fingerprintAutomatic').onchange=()=>{$('fingerprintMode').disabled=!$('fingerprintAutomatic').checked};
+$('manualPrompt').onchange=updateFingerprintExpected;
+$('manualTarget').onchange=updateFingerprintExpected;
+$('runManualTest').onclick=()=>{
+ const t=chosenManualTarget();
+ submitManualTest(t?.account,t?.model,chosenPrompt());
+};
+$('saveFingerprintExpected').onclick=()=>action(async()=>{
+ const t=chosenManualTarget();
+ if(!t)throw Error('请选择监测目标');
+ if(fingerprintModelsError)throw Error('参考库不可用，请刷新后重试：'+fingerprintModelsError);
+ await api('/api/fingerprint-expected','POST',{
+  account:t.account,model:t.model,expected:$('fingerprintExpected').value
+ });
+});
 $('saveAutoPrompts').onclick=()=>action(async()=>{
  const prompt_ids=[...document.querySelectorAll('#promptOptions input:checked')].map(x=>x.value);
  if(!prompt_ids.length)throw Error('至少选择一道客观题');
- await api('/api/auto-prompts','POST',{prompt_ids,rotate:$('rotatePrompts').checked});
+ const fingerprint_mode=$('fingerprintAutomatic').checked?$('fingerprintMode').value:'off';
+ if(fingerprint_mode==='periodic_24h'&&!confirm('启用周期指纹检测后，每个正常监测目标每 24 小时会增加 3 次上游请求，确认继续？'))return;
+ await api('/api/auto-prompts','POST',{prompt_ids,rotate:$('rotatePrompts').checked,fingerprint_mode});
 });
 $('saveCustom').onclick=()=>action(async()=>{
  const body={
@@ -304,6 +369,6 @@ $('restoreRoute').onclick=()=>action(async()=>{
 });
 $('historyAccount').onchange=renderHistory;
 (async()=>{
- try{await refresh();await loadModels()}catch(e){notice('控制台加载失败：'+e.message,true)}
+ try{await refresh();await loadModels();await loadFingerprintModels()}catch(e){notice('控制台加载失败：'+e.message,true)}
  setInterval(async()=>{try{await refresh()}catch{}},30000);
 })();

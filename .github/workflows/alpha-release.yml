@@ -1,7 +1,7 @@
 name: Build Codex Guard Alpha Release
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/fingerprint-bank-alpha10']
     paths:
       - '.github/workflows/alpha-release.yml'
       - 'cmd/**'
@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard: fixed HTTP 404 in account probes by using native Codex model IDs and X-Magpie-Account, removed stale probe alias rewrites. Keep automatic quarantine off until real-account review."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.10: fingerprint detection integrated with objective question bank. Independent manual fingerprint test, configurable after-failures/off/opt-in 24h periodic sampling, persisted schedules and reference model picker; fingerprint verdicts never count as objective failures. Keep production routing in observation mode until validated."

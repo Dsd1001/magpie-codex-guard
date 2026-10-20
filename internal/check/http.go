@@ -128,6 +128,14 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		}
 		writeJSON(w, models)
 	})
+	mux.HandleFunc("GET /api/fingerprint-models", func(w http.ResponseWriter, r *http.Request) {
+		models, err := FingerprintModelCatalog()
+		if err != nil {
+			apiError(w, err, 503)
+			return
+		}
+		writeJSON(w, models)
+	})
 	mux.HandleFunc("POST /api/config", func(w http.ResponseWriter, r *http.Request) {
 		var input Config
 		if !decode(w, r, &input) {
@@ -207,13 +215,14 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 	})
 	mux.HandleFunc("POST /api/auto-prompts", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			PromptIDs []string `json:"prompt_ids"`
-			Rotate    bool     `json:"rotate"`
+			PromptIDs       []string `json:"prompt_ids"`
+			Rotate          bool     `json:"rotate"`
+			FingerprintMode string   `json:"fingerprint_mode"`
 		}
 		if !decode(w, r, &input) {
 			return
 		}
-		if err := s.ConfigureAutoPrompts(input.PromptIDs, input.Rotate); err != nil {
+		if err := s.ConfigureDetectionPrompts(input.PromptIDs, input.Rotate, input.FingerprintMode); err != nil {
 			apiError(w, err, 400)
 			return
 		}

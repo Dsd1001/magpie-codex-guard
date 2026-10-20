@@ -35,6 +35,8 @@ type AccountTarget struct {
 	PromptRotation      uint64    `json:"prompt_rotation,omitempty"`
 	FingerprintExpected string    `json:"fingerprint_expected,omitempty"`
 	FingerprintVersion  string    `json:"fingerprint_version,omitempty"`
+	LastFingerprintAt   time.Time `json:"last_fingerprint_at,omitempty"`
+	NextFingerprintAt   time.Time `json:"next_fingerprint_at,omitempty"`
 }
 
 type FingerprintCandidate struct {

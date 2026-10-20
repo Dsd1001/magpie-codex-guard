@@ -93,6 +93,7 @@ func (s *Service) findPromptLocked(id string) (Prompt, bool) {
 	for _, p := range s.state.CustomPrompts {
 		if p.ID == id {
 			p.Custom = true
+            p.Kind = "objective"
 			p.Automatic = validAutomaticCustom(p)
 			return p, true
 		}
@@ -104,6 +105,7 @@ func (s *Service) promptCatalogLocked() []Prompt {
 	list := append([]Prompt{}, Prompts...)
 	for _, p := range s.state.CustomPrompts {
 		p.Custom = true
+        p.Kind = "objective"
 		p.Automatic = validAutomaticCustom(p)
 		list = append(list, p)
 	}
@@ -130,7 +132,7 @@ func (s *Service) AddCustomPrompt(name, promptText, guidance string, automatic b
 		return Prompt{}, errors.New("自定义题库最多保存 40 道题")
 	}
 	p := Prompt{
-		ID: "custom-" + Secret()[:16], Name: strings.TrimSpace(name),
+		ID: "custom-" + Secret()[:16], Kind: "objective", Name: strings.TrimSpace(name),
 		Text: promptText, Guidance: guidance, Automatic: automatic, Custom: true,
 		ExpectedAnswers: clean,
 	}
@@ -187,7 +189,7 @@ func (s *Service) UpdateCustomPrompt(id, name, promptText, guidance string, auto
 		}
 		before := s.state.CustomPrompts[i]
 		updated := Prompt{
-			ID: id, Name: strings.TrimSpace(name), Text: promptText,
+			ID: id, Kind: "objective", Name: strings.TrimSpace(name), Text: promptText,
 			Guidance: guidance, Automatic: automatic, Custom: true, ExpectedAnswers: clean,
 		}
 		rubricChanged := before.Text != updated.Text || before.Automatic != updated.Automatic ||

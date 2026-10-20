@@ -22,10 +22,12 @@ func (s *Service) ScheduleOneAccount(now time.Time) error {
 		priority               int
 		due                    time.Time
 		pending                bool
+		periodicFingerprint    bool
 	}
 	candidates := []candidate{}
 	prompts := s.activeAccountPromptsLocked()
-	rotate := s.effectiveAutoPromptPolicyLocked().Rotate
+	policy := s.effectiveAutoPromptPolicyLocked()
+	rotate := policy.Rotate
 	if len(prompts) == 0 {
 		s.mu.Unlock()
 		return errors.New("没有可自动判分的客观题")
@@ -48,6 +50,14 @@ func (s *Service) ScheduleOneAccount(now time.Time) error {
 		due := t.NextCheckAt
 		if held {
 			due = hold.NextCheckAt
+		}
+		if policy.FingerprintMode == FingerprintPeriodic && !held &&
+			t.State == "passed" && t.ConsecutiveFails == 0 &&
+			!t.NextFingerprintAt.IsZero() && !now.Before(t.NextFingerprintAt) {
+			candidates = append(candidates, candidate{
+				account: t.Account, model: t.Model, periodicFingerprint: true,
+				priority: 4, due: t.NextFingerprintAt,
+			})
 		}
 		if !due.IsZero() && now.Before(due) {
 			continue
@@ -84,6 +94,9 @@ func (s *Service) ScheduleOneAccount(now time.Time) error {
 	next := candidates[0]
 	if next.pending {
 		return s.TriggerPendingFingerprint(next.account)
+	}
+	if next.periodicFingerprint {
+		return s.TriggerFingerprint(next.account, next.model, false)
 	}
 	return s.TriggerAccount(next.account, next.model, next.prompt, false)
 }

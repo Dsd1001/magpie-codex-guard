@@ -5,7 +5,8 @@
 - **Node 插件入口**：负责启动和关闭 Go 服务，提供本机和临时远程两种管理入口。远程模式复用原插件的 Go Console，按需下载 SHA-256 固定校验的 cloudflared，直接将临时隧道连接到 Go 的本机环回监听地址；没有新增 Node HTTP 代理。
 - **Cloudflare 临时控制台**：远程连接使用一次性 10 分钟管理票据、30 分钟会话和最多 30 分钟的 Quick Tunnel；首次连接必须通过远端 `/health` 就绪检查。Go 控制台校验随机临时域名、Host 和 Origin，直接签发 SameSite=Lax、HttpOnly、Secure（远程 HTTPS）会话 Cookie；管理令牌仅通过插件启动时的私有进程管道传递。隧道不接触 Gateway Key 原始值。
 - **Go 服务**：负责 Codex 账号读取、独立探针、自动题库、指纹采样、持久化调度、路由控制和只读快照。模型下拉框优先调用 Magpie 自带 `magpie models codex` 的只读目录并严格筛选 `codex/` ID；若 CLI 不可用且已配置检测连接，可回退到 `/v1/models`。实际请求直接使用原生 `codex/` 模型标识及 `X-Magpie-Account` 固定账号，无需、也不会改写网关的中间件文件或附加 `quality-probe/` 临时模型前缀。不使用生产 Key 查询模型，也不改变自动隔离开关。
-- **指纹评分器**：Go 纯本地实现 lm-detector shared-detector-v2。嵌入官方固定版本 binary 与 60 个模型的精简元数据；不加载完整 12 MB JSON bank，也不运行额外的 Node/Bun 评分进程。
+- **统一题库与指纹评分器**：客观题具有标准答案；内置 `model-fingerprint` 是独立的 `fingerprint` 类型，绝不进入客观题自动轮换及连续失败累积。手动、周期性和隔离阶段都复用 Go 的三轮随机序列采样及纯本地 lm-detector shared-detector-v2 评分（60 个模型参考库）；手动/周期性的统计分类只写历史记录，不改动 Holds、客观题计数及生产路由。
+- **指纹触发配置**：持久化的 `fingerprint_mode` 默认为 `after_failures` 以兼容旧版；操作员可以选择 `periodic_24h`，只对客观题正常、未隔离的目标每 24 小时额外检测一次（3 个模型请求），或 `off` 关闭自动指纹并在隔离时保守判低风险。周期到期时间存入 `NextFingerprintAt`，进程重启不会立即集中补跑。预期指纹模型只能取固定本地候选模型库中的 ID。
 - **SQLite**：单写连接持久化状态、隔离 Hold、下次复测时间、日请求预算和写前路由日志。
 - **路由控制器**：持有 Magpie `caller-keys.json.lock` 后操作 `caller-keys.json`；输入来自当前 Magpie 的稳定账号 ID 和 Gateway Key 清单。控制器绝不修改 `logins.json`。
 

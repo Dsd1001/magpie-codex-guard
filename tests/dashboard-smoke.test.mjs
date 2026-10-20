@@ -15,7 +15,7 @@ function fixture({modelsError=''}={}){
    holds:{},
    account_targets:{},
    account_results:[],
-   auto_prompt_policy:{configured:false,rotate:true,prompt_ids:['milk']},
+   auto_prompt_policy:{configured:false,rotate:true,prompt_ids:['milk'],fingerprint_mode:'after_failures'},
    custom_prompts:[],
   },
   health:'',
@@ -25,7 +25,7 @@ function fixture({modelsError=''}={}){
    {id:'bbb',user:'<img src=x onerror=alert(1)>@example.com'},
   ],
   keys:[{id:'probe',name:'Detection'}, {id:'prod',name:'Business'}],
-  prompts:[{id:'milk',name:'牛奶推理',automatic:true}],
+  prompts:[{id:'model-fingerprint',kind:'fingerprint',name:'模型指纹检测',automatic:false},{id:'milk',name:'牛奶推理',kind:'objective',automatic:true}],
  };
  const dom=new JSDOM(html,{url:'http://127.0.0.1:3344/',runScripts:'outside-only'});
  const w=dom.window;
@@ -40,6 +40,13 @@ function fixture({modelsError=''}={}){
   else if(path==='/api/models'){
    if(modelsError)return {ok:false,status:503,text:async()=>modelsError};
    payload=[{id:'codex/gpt-6.1-sol',group:'codex'}];
+  }
+  else if(path==='/api/fingerprint-models')payload=[{id:'gpt-6-astra',name:'gpt-6-astra/6.1-sol'},{id:'gpt-6-sol',name:'gpt-6-sol'}];
+  else if(path==='/api/fingerprint-expected'&&method==='POST'){
+   const req=JSON.parse(options.body);
+   const target=state.state.account_targets[req.account+'\x1f'+req.model];
+   if(target)target.fingerprint_expected=req.expected;
+   payload={ok:true};
   }
   else if(path==='/api/config'&&method==='POST'){
    state.gateway_configured=true;
@@ -143,5 +150,73 @@ test('saving the connection reports catalog failure instead of a false success',
   assert.equal(w.document.querySelector('#gatewayKey').value,'');
   assert.ok(calls.some(c=>c.path==='/api/config'&&c.options.method==='POST'));
   assert.doesNotMatch(w.document.querySelector('#notice').textContent,/操作已完成/);
+ }finally{dom.window.close()}
+});
+
+test('fingerprint is in the same bank but excluded from objective rotation',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
+  await waitFor(()=>w.document.querySelector('#fingerprintExpected option[value="gpt-6-astra"]'));
+  const values=[...w.document.querySelectorAll('#promptOptions input[type="checkbox"]')].map(x=>x.value);
+  assert.deepEqual(values,['milk']);
+  assert.equal(w.document.querySelector('#fingerprintAutomatic').checked,true);
+  assert.equal(w.document.querySelector('#fingerprintMode').value,'after_failures');
+  w.document.querySelector('#fingerprintMode').value='periodic_24h';
+  w.document.querySelector('#saveAutoPrompts').click();
+  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='periodic_24h');
+  const post=calls.findLast(c=>c.path==='/api/auto-prompts');
+  assert.deepEqual(JSON.parse(post.options.body).prompt_ids,['milk']);
+  assert.equal(JSON.parse(post.options.body).fingerprint_mode,'periodic_24h');
+  w.document.querySelector('#fingerprintAutomatic').checked=false;
+  w.document.querySelector('#fingerprintAutomatic').dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.querySelector('#fingerprintMode').disabled,true);
+  w.document.querySelector('#saveAutoPrompts').click();
+  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='off');
+  assert.equal(state.state.auto_prompt_policy.prompt_ids[0],'milk');
+  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('操作已完成'));
+  await new Promise(resolve=>setTimeout(resolve,65));
+ }finally{dom.window.close()}
+});
+
+test('manual fingerprint selects account, saves bank reference, then runs independent detection',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
+  await waitFor(()=>w.document.querySelector('#fingerprintExpected option[value="gpt-6-astra"]'));
+  w.document.querySelector('#accountSelect').value='aaa';
+  w.document.querySelector('#modelSelect').value='codex/gpt-6.1-sol';
+  w.document.querySelector('#addAccount').click();
+  await waitFor(()=>w.document.querySelector('#manualTarget').value.includes('aaa'));
+  w.document.querySelector('[data-tab="rules"]').click();
+  const prompt=w.document.querySelector('#manualPrompt');
+  prompt.value='model-fingerprint';
+  prompt.dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.querySelector('#fingerprintExpectation').hidden,false);
+  const expected=w.document.querySelector('#fingerprintExpected');
+  expected.value='gpt-6-astra';
+  w.document.querySelector('#saveFingerprintExpected').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/fingerprint-expected'));
+  assert.equal(Object.values(state.state.account_targets)[0].fingerprint_expected,'gpt-6-astra');
+  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('操作已完成'));
+  w.document.querySelector('#runManualTest').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/account-test'));
+  const body=JSON.parse(calls.findLast(c=>c.path==='/api/account-test').options.body);
+  assert.deepEqual(body,{account:'aaa',model:'codex/gpt-6.1-sol',prompt:'model-fingerprint'});
+  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('不改变隔离状态'));
+  assert.equal(state.state.route.auto_apply,false);
+  // Never inject external reference labels as markup in the history UI.
+  state.state.account_results.push({
+   account:'aaa',model:'codex/gpt-6.1-sol',prompt:'model-fingerprint',
+   prompt_name:'手动模型指纹检测',verdict:'mismatch',
+   time:new Date().toISOString(),fingerprint:{
+    verdict:'mismatch',version:'local-test',used_outputs:3,
+    candidates:[{model:'test',name:'<img src=x onerror=alert(1)>',probability:.93}]
+   }
+  });
+  w.document.querySelector('#refresh').click();
+  await waitFor(()=>w.document.querySelector('#historyRows summary')?.textContent.includes('指纹不一致'));
+  assert.equal(w.document.querySelector('#historyRows img'),null);
+  await new Promise(resolve=>setTimeout(resolve,65));
  }finally{dom.window.close()}
 });

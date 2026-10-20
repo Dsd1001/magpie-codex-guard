@@ -23,7 +23,7 @@
     </section>
     <nav class="tabs" aria-label="控制台导航">
       <button data-tab="accounts" class="active">账号监测</button>
-      <button data-tab="rules">客观题配置</button>
+      <button data-tab="rules">检测题库</button>
       <button data-tab="history">检测记录</button>
       <button data-tab="settings">设置与路由</button>
     </nav>
@@ -41,11 +41,32 @@
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
     <section id="rules" class="page" hidden>
-      <div class="section-head"><div><h1>检测题库</h1><p>正常时轮换选中的客观题；异常复测坚持同一道题。</p></div></div>
+      <div class="section-head"><div><h1>检测题库</h1><p>客观题与模型指纹统一管理、独立判分。指纹结果不会累加客观题错误次数。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
-        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选题目</label>
+        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选客观题</label>
+        <div class="fingerprint-policy">
+          <label class="check"><input type="checkbox" id="fingerprintAutomatic"> 模型指纹检测 · 参与自动检测</label>
+          <label>指纹自动触发时机
+            <select id="fingerprintMode"><option value="after_failures">客观题连续 3 次错误后复核（推荐）</option><option value="periodic_24h">异常复核 + 正常账号每 24 小时周期检测</option></select>
+          </label>
+          <p class="hint">每轮指纹检测调用模型 3 次。关闭自动指纹时，连续 3 次客观题错误仍按低风险隔离复测；周期指纹只生成记录，不直接改变生产路由。</p>
+        </div>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
+      </div>
+      <div class="card form-card">
+        <h2>手动检测</h2>
+        <p class="hint">选择已添加的监测账号、模型和检测题目。模型指纹将进行 3 轮采样，结果只记录在检测历史中，不触发隔离。</p>
+        <div class="fields manual-fields">
+          <label>监测账号与模型<select id="manualTarget"><option value="">选择监测目标</option></select></label>
+          <label>题目类型 / 检测题目<select id="manualPrompt"><option value="">选择客观题或指纹检测</option></select></label>
+        </div>
+        <div id="fingerprintExpectation" class="fingerprint-policy" hidden>
+          <label>预期指纹参考模型（可按账号单独保存）<select id="fingerprintExpected"><option value="">自动匹配当前 Codex 模型</option></select></label>
+          <div class="actions-inline"><button id="saveFingerprintExpected" class="subtle">保存该账号的预期模型</button></div>
+          <p id="fingerprintModelHelp" class="hint">指纹评分是候选库内的相对判断，无法识别时显示「不可判」，不会当作回答错误。</p>
+        </div>
+        <button id="runManualTest" class="primary">执行手动检测</button>
       </div>
       <div class="card form-card">
         <h2>新增自定义客观题</h2>
@@ -86,7 +107,7 @@
           <p class="hint">默认观察模式。隔离后检测 Key 保持允许，生产 Key 被限制。所有账号均异常时可能触发安全拒绝；不可将空白名单写作全量隔离。</p>
         </div>
       </div>
-      <div class="card small-card"><h2>固定策略</h2><p>正常：每 1 小时；首次错误：2 分钟复测。连续 3 次错误暂停路由并做 3 次指纹采样。指纹明显异常：每 48 小时复测；指纹正常或不可判：首次 6 小时，之后每 24 小时；两次客观题正确、间隔 2 分钟，恢复路由。</p></div>
+      <div class="card small-card"><h2>固定策略</h2><p>正常账号每 1 小时检测客观题，首次错误后 2 分钟复测。连续 3 次错误进入隔离流程；默认执行 3 轮指纹复核，关闭自动指纹则保守判为低风险。指纹明显异常时每 48 小时复测客观题；指纹正常或不可判时首次 6 小时，之后每 24 小时复测。连续两次客观题正确、间隔 2 分钟，解除隔离。单独手动与周期指纹结果不改变路由。</p></div>
     </section>
   </main>
   <footer>Codex Guard · 独立插件开发版 · 仅管理通过所配置 Gateway Key 的业务流量</footer>
