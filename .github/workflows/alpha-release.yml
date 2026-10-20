@@ -1,0 +1,56 @@
+name: Build Codex Guard Alpha Release
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/alpha-release.yml'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'package.json'
+      - 'scripts/build-release.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  alpha:
+    if: github.repository == 'Dsd1001/magpie-codex-guard'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Unit and static tests
+        run: |
+          go test ./...
+          go vet ./...
+          npm ci
+          npm run check:js
+          npm run test:ui
+      - name: Build Linux and macOS binaries and package
+        run: npm run build:release
+      - name: Publish immutable prerelease artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          ARCHIVE="dist/magpie-codex-guard-${VERSION}.tgz"
+          test -s "$ARCHIVE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to replace existing immutable alpha release $TAG"
+            exit 1
+          fi
+          sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Account-only Codex Guard alpha.4. Reuses the proven Go Cloudflare console and one-time login from the previous plugin. Verify in observation mode before enabling production routing."

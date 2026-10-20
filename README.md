@@ -11,7 +11,7 @@
 - 自动隔离影响全部已管理的生产 Gateway Key，**检测专用 Key 保持可用**；不删除、不停用 Codex 登录本身。
 - 账号历史、两种风险级别和下次复测时间写入专用 SQLite 数据目录，服务重启后原样继续。
 
-不再提供原插件的模型级质量门禁、模型级测试、HTML/SVG 输出预览或 Cloudflare 临时控制台。
+不再提供原插件的模型级质量门禁、模型级测试或 HTML/SVG 输出预览。**Cloudflare 远程控制台直接沿用原 Account Intelligence Check 的 Go 控制台与一次性会话机制**，不再使用独立 Node HTTP 代理。
 
 ## 隔离和恢复规则
 
@@ -56,7 +56,7 @@ magpie plugin add github:Dsd1001/magpie-codex-guard
 
 **Docker 远程控制台：** 在 Magpie 的插件登录列表中，选择 **「打开临时远程控制台（Cloudflare）」**，等待生成 `https://随机子域名.trycloudflare.com/open/...` 一次性链接，在自己浏览器打开即可；不要选择只适用于服务器本机的 `127.0.0.1` 入口。首次使用时自动下载校验 Cloudflare 官方 `cloudflared 2026.10.0`，无需 Cloudflare 账号、额外 DNS 记录或暴露入站端口。远程临时隧道最长 30 分钟，管理链接 10 分钟内有效且只能使用一次，登录会话 30 分钟自动过期。插件会在外网健康检查通过后才返回链接。
 
-注意：Cloudflare 承担 HTTPS 转发，控制台内可修改业务路由，因此一次性链接视为管理凭证，不能公开分享。Node 转发层和 Go 后端均只监听 `127.0.0.1`，远程请求严格校验 Cloudflare 分配的 Host 与 Origin，并复用 Go 原有一次性登录/会话校验。测试期间请先保持**自动隔离关闭**；升级已安装的 Codex Guard 后，必须重新进入插件登录流程，旧的本机 URL 不能变成公网 URL。
+注意：Cloudflare 承担 HTTPS 转发，控制台内可修改业务路由，因此一次性链接视为管理凭证，不能公开分享。**Go 控制台始终监听 `127.0.0.1`，Cloudflare 官方客户端直接将随机 HTTPS 域名转发到该端口**；Go 服务复用原插件已验证的 Host/Origin、一次性登录和会话校验逻辑。测试期间请先保持**自动隔离关闭**；升级已安装的 Codex Guard 后，必须重新进入插件登录流程，旧的本机 URL 不能变成公网 URL。
 
 ## 本地构建（开发阶段）
 
@@ -96,7 +96,7 @@ npm run build:release
 - **16 组真实公开参考回答**与 lm-detector 原版 JavaScript 校准分数及候选排序对比（容许数值误差 1e-6）。
 - 使用 jsdom 的浏览器 DOM 模拟测试：邮箱文本安全、手动账号选择、题库保存、路由预览（尚未在实际浏览器人工验收）。
 
-- 临时远程隧道测试：Cloudflare 随机域名限制、严格 Host/Origin、Go 会话 Cookie 安全属性及受控代理；已在隔离数据目录通过真实 HTTPS 公网临时隧道登录/读取状态的端到端测试。
+- 复用原插件 Go Quick Tunnel 生命周期和浏览器会话测试；`/api/console` 仅允许插件控制令牌使用，公网页面无法签发新链接。单独的 Node HTTP 代理已移除。
 
 详见 [设计与迁移说明](docs/architecture.md)。
 

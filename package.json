@@ -1,6 +1,6 @@
 {
   "name": "magpie-codex-guard",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "type": "module",
   "main": "./plugin/index.mjs",
   "description": "Account-scoped Codex quality probes, local model fingerprints and safe Magpie Gateway Key quarantine.",
@@ -8,7 +8,7 @@
     "test": "go test ./...",
     "build:linux": "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/codex-guard-linux-amd64 ./cmd/codex-guard",
     "test:ui": "node --test tests/*.test.mjs",
-    "check:js": "node --check plugin/index.mjs && node --check plugin/runtime.mjs && node --check plugin/cloudflared-runtime.mjs && node --check plugin/remote-console.mjs && node --check plugin/remote-proxy.mjs && node --check internal/check/web/assets/app.js",
+    "check:js": "node --check plugin/index.mjs && node --check plugin/runtime.mjs && node --check plugin/cloudflared-runtime.mjs && node --check plugin/console-readiness.mjs && node --check internal/check/web/assets/app.js",
     "build:release": "sh scripts/build-release.sh"
   },
   "devDependencies": {

@@ -9,53 +9,14 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
 //go:embed web/*
 var web embed.FS
 
-type GuardAccess struct {
-	mu              sync.Mutex
-	control, origin string
-	tickets         map[string]time.Time
-	sessions        map[string]time.Time
-}
-
-func NewGuardAccess(control, origin string) *GuardAccess {
-	return &GuardAccess{control: control, origin: origin, tickets: map[string]time.Time{}, sessions: map[string]time.Time{}}
-}
-func (a *GuardAccess) Ticket() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	id := Secret()
-	a.tickets[id] = time.Now().Add(10 * time.Minute)
-	return id
-}
-func (a *GuardAccess) exchange(id string) (string, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	deadline, ok := a.tickets[id]
-	delete(a.tickets, id)
-	if !ok || time.Now().After(deadline) {
-		return "", false
-	}
-	session := Secret()
-	a.sessions[session] = time.Now().Add(30 * time.Minute)
-	return session, true
-}
-func (a *GuardAccess) validSession(id string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	deadline, ok := a.sessions[id]
-	if ok && time.Now().After(deadline) {
-		delete(a.sessions, id)
-		return false
-	}
-	return ok
-}
-func (a *GuardAccess) validControl(id string) bool {
+// The management control token never leaves the plugin's private child pipe.
+func (a *Access) validControl(id string) bool {
 	return subtle.ConstantTimeCompare([]byte(id), []byte(a.control)) == 1
 }
 func writeJSON(w http.ResponseWriter, v any) {
@@ -84,8 +45,42 @@ func apiError(w http.ResponseWriter, err error, code int) {
 	}
 	http.Error(w, err.Error(), code)
 }
-func (s *Service) ManagementHandler(access *GuardAccess) http.Handler {
+func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) http.Handler {
+	var console *Console
+	if len(consoles) > 0 {
+		console = consoles[0]
+	}
 	mux := http.NewServeMux()
+	// Reuse the original plugin's Go-owned tunnel lifecycle and ticket API.
+	mux.HandleFunc("POST /api/console", func(w http.ResponseWriter, r *http.Request) {
+		if console == nil {
+			http.Error(w, "管理控制台未启用", http.StatusServiceUnavailable)
+			return
+		}
+		var input struct {
+			Remote bool   `json:"remote"`
+			Binary string `json:"binary"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.Binary != "" {
+			console.SetBinary(input.Binary)
+		}
+		link, err := console.Open(r.Context(), input.Remote)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, map[string]string{"url": link})
+	})
+	mux.HandleFunc("POST /api/console/close", func(w http.ResponseWriter, r *http.Request) {
+		if console != nil {
+			// Let the tunnel deliver the response before terminating transport.
+			time.AfterFunc(300*time.Millisecond, console.Close)
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	})
 	root, _ := fs.Sub(web, "web")
 	mux.Handle("GET /assets/", http.FileServer(http.FS(root)))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
@@ -350,20 +345,31 @@ func (s *Service) ManagementHandler(access *GuardAccess) http.Handler {
 				http.Error(w, "仅允许插件签发管理链接", 403)
 				return
 			}
-			writeJSON(w, map[string]string{"url": access.origin + "/open/" + access.Ticket()})
+			var link string
+			if console != nil {
+				var err error
+				link, err = console.Open(r.Context(), false)
+				if err != nil {
+					http.Error(w, err.Error(), 503)
+					return
+				}
+			} else {
+				link = access.local + "/open/" + access.Ticket()
+			}
+			writeJSON(w, map[string]string{"url": link})
 			return
 		}
 		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/open/") {
-			if r.Host != strings.TrimPrefix(access.origin, "http://") {
+			if !access.Origin("http://"+r.Host) && !access.Origin("https://"+r.Host) {
 				http.Error(w, "管理 Host 不匹配", 403)
 				return
 			}
-			session, ok := access.exchange(strings.TrimPrefix(r.URL.Path, "/open/"))
+			session, ok := access.Exchange(strings.TrimPrefix(r.URL.Path, "/open/"))
 			if !ok {
 				http.Error(w, "管理链接已失效", 401)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "guard_session", Value: session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 1800})
+			http.SetCookie(w, &http.Cookie{Name: "guard_session", Value: session, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: access.Origin("https://"+r.Host) || r.TLS != nil, MaxAge: 1800})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
@@ -371,16 +377,22 @@ func (s *Service) ManagementHandler(access *GuardAccess) http.Handler {
 		if cookie, err := r.Cookie("guard_session"); err == nil {
 			session = cookie.Value
 		}
-		if !control && !access.validSession(session) {
+		if !control && !access.Session(session) {
 			http.Error(w, "请从 Magpie 插件入口打开一次性管理链接", 401)
 			return
 		}
 		if r.Method != "GET" {
 			origin := r.Header.Get("Origin")
-			if origin != "" && origin != access.origin {
+			if origin != "" && !access.Origin(origin) {
 				http.Error(w, "Origin 不匹配", 403)
 				return
 			}
+		}
+		// Only the Magpie plugin control token can mint tunnels/tickets.
+		// An authenticated administrator may close their own temporary tunnel.
+		if r.URL.Path == "/api/console" && !control {
+			http.Error(w, "仅插件可开启控制台", http.StatusForbidden)
+			return
 		}
 		mux.ServeHTTP(w, r)
 	})

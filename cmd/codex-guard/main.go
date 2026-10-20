@@ -23,14 +23,15 @@ func main() {
 	data := flag.String("data", "data", "private state dir")
 	gate := flag.String("gate", "plugin/gate.middleware.js", "probe middleware path")
 	listen := flag.String("listen", "127.0.0.1:0", "loopback listener")
+	cloudflared := flag.String("cloudflared", "", "official cloudflared binary")
 	owned := flag.Bool("owned", false, "stop when parent stdin closes")
 	flag.Parse()
-	if err := run(*data, *gate, *listen, *owned); err != nil {
+	if err := run(*data, *gate, *listen, *cloudflared, *owned); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
-func run(data, gate, listen string, owned bool) error {
+func run(data, gate, listen, binary string, owned bool) error {
 	if err := os.MkdirAll(data, 0700); err != nil {
 		return err
 	}
@@ -68,8 +69,10 @@ func run(data, gate, listen string, owned bool) error {
 	origin := "http://" + ln.Addr().String()
 	token := check.Secret()
 	access := check.NewGuardAccess(token, origin)
+	console := check.NewConsole(access, origin, data, binary)
+	defer console.Close()
 	httpserver := &http.Server{
-		Handler:           service.ManagementHandler(access),
+		Handler:           service.ManagementHandler(access, console),
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	// One-time control token travels only over the plugin child stdout pipe.
