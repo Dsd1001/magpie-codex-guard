@@ -79,7 +79,7 @@ export async function resolveBinary({ root, dataDir, binaryPath, fetcher = fetch
   try {
     const response = await fetcher(ARCHIVE_URL, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'magpie-codex-guard/0.1.0-alpha.4' },
+      headers: { 'User-Agent': 'magpie-codex-guard/0.1.0-alpha.5' },
     });
     if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
     const length = Number(response.headers?.get?.('content-length') || 0);
