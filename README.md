@@ -50,7 +50,7 @@ github:Dsd1001/magpie-codex-guard
 magpie plugin add github:Dsd1001/magpie-codex-guard
 ```
 
-**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件会在首次启动时从 [v0.1.0-alpha.1 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.1) 自动下载所需的预编译程序，校验安装包及可执行文件的固定 SHA-256 后缓存到独立数据目录。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。**
+**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件会在首次启动时从 [v0.1.0-alpha.4 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.4) 自动下载所需的预编译程序，校验安装包及可执行文件的固定 SHA-256 后缓存到独立数据目录。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** `alpha.4` 的三个 Go 二进制与 Release 安装包均固定 SHA-256，更新插件时会使用新的版本缓存目录，不会继续运行旧 `alpha.1` 后端。
 
 **生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
 
