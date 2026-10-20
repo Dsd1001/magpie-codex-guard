@@ -50,12 +50,20 @@ func TestObjectiveFingerprintIsolationAndRecoveryIntegration(t *testing.T) {
 		}
 		total.Add(1)
 		var body struct {
+			Model    string `json:"model"`
 			Messages []struct {
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
+		}
+		// Every objective retry and every fingerprint sample must use
+		// the native Magpie model ID, never a private quality-probe alias.
+		if body.Model != "codex/gpt-6.1-sol" {
+			t.Errorf("invalid native Codex route: %q", body.Model)
+			http.Error(w, "unrecognized model", http.StatusNotFound)
+			return
 		}
 		answer := "50 inches"
 		if okAnswers.Load() {

@@ -168,10 +168,9 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 	var tokens int
 	if err == nil {
 		ctx, cancel := context.WithTimeout(parent, 180*time.Second)
-		s.mu.Lock()
-		alias := s.state.Alias
-		s.mu.Unlock()
-		answer, tokens, err = CallAccount(ctx, cfg, "quality-probe/"+alias+"/"+model, account, p.Text)
+		// Request the native Magpie model directly. The account is pinned
+		// independently by X-Magpie-Account inside CallAccount.
+		answer, tokens, err = CallAccount(ctx, cfg, model, account, p.Text)
 		cancel()
 	}
 	verdict := "unavailable"
@@ -245,7 +244,6 @@ func (s *Service) collectFingerprint(parent context.Context, account, model stri
 		s.mu.Unlock()
 		return
 	}
-	alias := s.state.Alias
 	expected := model
 	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil && t.FingerprintExpected != "" {
 		expected = t.FingerprintExpected
@@ -262,7 +260,7 @@ func (s *Service) collectFingerprint(parent context.Context, account, model stri
 		var tokens int
 		if err == nil {
 			ctx, cancel := context.WithTimeout(parent, 180*time.Second)
-			answer, tokens, err = CallAccount(ctx, cfg, "quality-probe/"+alias+"/"+model, account, ch.Prompt)
+			answer, tokens, err = CallAccount(ctx, cfg, model, account, ch.Prompt)
 			cancel()
 		}
 		r := AccountResult{ID: Secret()[:12], Batch: batch, Account: account, Model: model, Prompt: "fingerprint-sample", PromptName: "模型指纹采样", Time: time.Now(), Answer: answer, Tokens: tokens, Verdict: "passed", ExpectedCount: ch.ExpectedCount}

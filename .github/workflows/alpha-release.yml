@@ -1,7 +1,7 @@
 name: Build Codex Guard Alpha Release
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/native-route-alpha8']
     paths:
       - '.github/workflows/alpha-release.yml'
       - 'cmd/**'
@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Account-only Codex Guard. Uses the proven Go Cloudflare console and a read-only Magpie Codex model catalog; model selection does not require a Gateway Key. Test in observation mode before enabling production routing."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Account-only Codex Guard alpha.8 backend: fix Magpie HTTP 404 by probing native codex/* models with X-Magpie-Account and removing obsolete probe alias/middleware rewrites. Keep automatic quarantine off pending live validation."

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,27 +186,9 @@ func (s *Service) saveLocked() error {
 		s.health = err.Error()
 		return err
 	}
-	// Middleware only unwraps private probe aliases. It does not block models.
-	// Codex quarantine uses Magpie's native per-Gateway-Key account scopes.
-	alias, _ := json.Marshal(s.state.Alias)
-	code := fmt.Sprintf(`const alias=%s;
-export function onRequest(body) {
- if(body && typeof body.model==="string"){
-  const prefix="quality-probe/"+alias+"/";
-  if(body.model.startsWith(prefix))body.model=body.model.slice(prefix.length);
- }
- return body;
-}
-`, alias)
-	if s.gate != "" {
-		before, _ := os.ReadFile(s.gate)
-		if string(before) != code {
-			if err := AtomicWrite(s.gate, []byte(code)); err != nil {
-				s.health = "探针路由入口更新失败"
-				return err
-			}
-		}
-	}
+	// No middleware rewrite is needed: probes use the native Codex model ID
+	// and X-Magpie-Account. Do not mutate installed plugin code on state saves.
+	// The legacy gate argument remains accepted for old plugin launchers.
 	s.health = ""
 	return nil
 }

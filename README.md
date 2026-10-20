@@ -6,7 +6,7 @@
 - 从 Magpie 的 `logins.json` 只读提取 Codex 账号稳定 ID 和邮箱，**不导出 OAuth 凭证**。
 - 「检测模型」直接读取 Magpie 自带的 `magpie models codex` 目录，显示当前实例中的 Codex 模型；**无需先配置检测 Key 才能选模型**。若本机无 Magpie CLI，则回退到已配置检测网关的 `/v1/models`。查询失败会在界面显示原因。
 - 添加监测目标与真正发起检测分离：**实际探针仍必须配置独立检测 Gateway Key**，不会借用或暴露生产 Key。
-- 每次通过独立 Gateway Key 的 `X-Magpie-Account` 固定一个订阅账号，账号无法解析就取消请求，不允许随机切换。
+- 每次通过独立 Gateway Key 的 `X-Magpie-Account` 固定一个订阅账号，账号无法解析就取消请求，不允许随机切换。检测请求使用原生 `codex/<model>` 名称，不再使用 `quality-probe/` 前缀，也不写入全局模型中间件；否则 Magpie 会对未知别名返回 HTTP 404。
 - 客观题：保留牛奶题和可配置的自定义自动判分题。题库支持多选与顺序轮换；失败及隔离后始终复测同一题。
 - **连续 3 次客观题错误**后，先从生产业务路由排除该账号，再发送 3 次模型指纹挑战。
 - Go 本地评分：使用固定版本的 `lm-detector shared-detector-v2`（60 个候选模型），不依赖官网评分 API，也不向外部评分服务发送账号或 Gateway Key。
