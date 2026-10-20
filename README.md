@@ -54,7 +54,9 @@ magpie plugin add github:Dsd1001/magpie-codex-guard
 
 **生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
 
-**Docker 控制台限制：** 当前管理界面只监听插件所在容器的 `127.0.0.1`，GitHub 安装完成不等于公网浏览器可访问控制台。远程访问需要后续提供经过认证的安全入口；不要直接把该管理端口公开到公网。
+**Docker 远程控制台：** 在 Magpie 的插件登录列表中，选择 **「打开临时远程控制台（Cloudflare）」**，等待生成 `https://随机子域名.trycloudflare.com/open/...` 一次性链接，在自己浏览器打开即可；不要选择只适用于服务器本机的 `127.0.0.1` 入口。首次使用时自动下载校验 Cloudflare 官方 `cloudflared 2026.10.0`，无需 Cloudflare 账号、额外 DNS 记录或暴露入站端口。远程临时隧道最长 30 分钟，管理链接 10 分钟内有效且只能使用一次，登录会话 30 分钟自动过期。插件会在外网健康检查通过后才返回链接。
+
+注意：Cloudflare 承担 HTTPS 转发，控制台内可修改业务路由，因此一次性链接视为管理凭证，不能公开分享。Node 转发层和 Go 后端均只监听 `127.0.0.1`，远程请求严格校验 Cloudflare 分配的 Host 与 Origin，并复用 Go 原有一次性登录/会话校验。测试期间请先保持**自动隔离关闭**；升级已安装的 Codex Guard 后，必须重新进入插件登录流程，旧的本机 URL 不能变成公网 URL。
 
 ## 本地构建（开发阶段）
 
@@ -94,8 +96,10 @@ npm run build:release
 - **16 组真实公开参考回答**与 lm-detector 原版 JavaScript 校准分数及候选排序对比（容许数值误差 1e-6）。
 - 使用 jsdom 的浏览器 DOM 模拟测试：邮箱文本安全、手动账号选择、题库保存、路由预览（尚未在实际浏览器人工验收）。
 
+- 临时远程隧道测试：Cloudflare 随机域名限制、严格 Host/Origin、Go 会话 Cookie 安全属性及受控代理；已在隔离数据目录通过真实 HTTPS 公网临时隧道登录/读取状态的端到端测试。
+
 详见 [设计与迁移说明](docs/architecture.md)。
 
 ## 许可证与致谢
 
-MIT。原插件源码的许可声明见 [LICENSE](LICENSE)，lm-detector 评分算法和参考数据的许可声明见 [licenses/lm-detector.MIT.txt](licenses/lm-detector.MIT.txt)。上游是算法/数据的来源，**不提供远程评分 API**，本项目不会向上游站点发送生产 Key。
+MIT。原插件源码的许可声明见 [LICENSE](LICENSE)，lm-detector 评分算法和参考数据的许可声明见 [licenses/lm-detector.MIT.txt](licenses/lm-detector.MIT.txt)，自动下载的 Cloudflare 官方 `cloudflared` 使用 Apache 2.0，完整许可文本见 [licenses/cloudflared.apache2.txt](licenses/cloudflared.apache2.txt)。上游是算法/数据的来源，**不提供远程评分 API**，本项目不会向上游站点发送生产 Key。

@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveBinary } from './runtime.mjs';
+import { createRemoteConsole } from './remote-console.mjs';
 import path from 'node:path';
 import os from 'node:os';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
-let started,child;
+let started,child,remoteConsole;
 function start(options={}){
  if(started)return started;
  started=(async()=>{
@@ -31,6 +32,8 @@ function start(options={}){
    child.once('error',err=>{clearTimeout(timer);started=undefined;reject(err)});
    child.once('exit',code=>{
     clearTimeout(timer);
+    remoteConsole?.close();
+    remoteConsole=undefined;
     started=undefined;
     reject(new Error(`Codex Guard 检测后台提前退出（exit ${code}）`));
    });
@@ -39,24 +42,38 @@ function start(options={}){
  started.catch(()=>{started=undefined});
  return started;
 }
-process.once('exit',()=>child?.kill());
+process.once('exit',()=>{remoteConsole?.close();child?.kill()});
 export default {
  id:'magpie-codex-guard',
  server:async(_input,options={})=>({
   auth:{
    provider:'magpie-codex-guard',
-   methods:[{
-    type:'oauth',label:'打开 Codex Guard 账号检测控制台',
+   methods:[true,false].map(remote=>({
+    type:'oauth',
+    label:remote?'打开临时远程控制台（Cloudflare）':'打开本机控制台（仅限服务器）',
     async authorize(){
      const v=await start(options);
-     const response=await fetch(v.origin+'/api/open',{
-      method:'POST',headers:{Authorization:'Bearer '+v.control,'Content-Type':'application/json'},body:'{}'
-     });
-     if(!response.ok)throw new Error('无法生成管理链接');
-     const result=await response.json();
-     return {url:result.url,instructions:'在本机浏览器打开一次性管理链接；不需要供应商授权。',method:'code',callback:async()=>({type:'failed'})};
+     let url;
+     if(remote){
+      const dataDir=options.dataDir||path.join(os.homedir(),'.config','magpie-codex-guard');
+      remoteConsole??=createRemoteConsole({localOrigin:v.origin,control:v.control,dataDir,options});
+      url=await remoteConsole.open();
+     } else {
+      const response=await fetch(v.origin+'/api/open',{
+       method:'POST',headers:{Authorization:'Bearer '+v.control,'Content-Type':'application/json'},body:'{}'
+      });
+      if(!response.ok)throw new Error('无法生成本机管理链接');
+      url=(await response.json()).url;
+     }
+     return {
+      url,
+      instructions:remote?
+       '请在浏览器中打开完整的 HTTPS 一次性链接；链接 10 分钟内有效且仅能使用一次。临时远程通道最长 30 分钟，不需要供应商授权。':
+       '仅限 Magpie 所在服务器本机打开；远程部署请改用 Cloudflare 临时远程控制台。',
+      method:'code',callback:async()=>({type:'failed'})
+     };
     }
-   }],
+   })),
    async loader(){await start(options);return {}}
   },
   async config(cfg){
