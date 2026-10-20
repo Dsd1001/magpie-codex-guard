@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Magpie Codex Guard</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="app-header">
+    <div class="brand"><span class="brand-icon" aria-hidden="true">◈</span><div><strong>Codex Guard</strong><span>Magpie 账号质量与隔离</span></div></div>
+    <div class="header-meta"><span id="liveStatus" class="status-badge">读取中…</span><button id="refresh" class="subtle">刷新</button></div>
+  </header>
+  <main>
+    <section class="overview" aria-label="账号状态摘要">
+      <div><span>监测账号</span><strong id="statAccounts">—</strong></div>
+      <div><span>正常账号</span><strong id="statHealthy">—</strong></div>
+      <div><span>隔离中</span><strong id="statIsolated">—</strong></div>
+      <div><span>待指纹复核</span><strong id="statPending">—</strong></div>
+    </section>
+    <nav class="tabs" aria-label="控制台导航">
+      <button data-tab="accounts" class="active">账号监测</button>
+      <button data-tab="rules">客观题配置</button>
+      <button data-tab="history">检测记录</button>
+      <button data-tab="settings">设置与路由</button>
+    </nav>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="accounts" class="page">
+      <div class="section-head"><div><h1>Codex 账号</h1><p>自动检测以账号为单位；隔离账号从生产 Gateway Key 的路由池排除。</p></div></div>
+      <div class="toolbar">
+        <label>检测账号<select id="accountSelect"><option value="">选择账号邮箱</option></select></label>
+        <label>检测模型<select id="modelSelect"><option value="">选择模型</option></select></label>
+        <button id="addAccount" class="primary">添加监测</button>
+        <button id="addAll" class="subtle">添加全部账号</button>
+      </div>
+      <div class="card table-scroll"><table><thead><tr><th>账号</th><th>模型</th><th>状态</th><th>下次检测</th><th>操作</th></tr></thead><tbody id="accountRows"><tr><td colspan="5" class="empty">正在读取账号信息…</td></tr></tbody></table></div>
+      <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
+    </section>
+    <section id="rules" class="page" hidden>
+      <div class="section-head"><div><h1>检测题库</h1><p>正常时轮换选中的客观题；异常复测坚持同一道题。</p></div></div>
+      <div class="card form-card">
+        <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
+        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选题目</label>
+        <button id="saveAutoPrompts" class="primary">保存自动题库</button>
+      </div>
+      <div class="card form-card">
+        <h2>新增自定义客观题</h2>
+        <div class="fields"><label>题目名称<input id="customName" maxlength="120" placeholder="例如：数学逻辑检验"></label>
+        <label>题目正文<textarea id="customText" rows="4" placeholder="完整发送给模型的提示词"></textarea></label>
+        <label class="check"><input id="customAutomatic" type="checkbox" checked> 参与自动判分</label>
+        <label>标准答案，每行一个<textarea id="customAnswers" rows="2" placeholder="只允许精确匹配的答案"></textarea></label>
+        <label>评价说明（不会发送给模型）<textarea id="customGuidance" rows="2"></textarea></label></div>
+        <button id="saveCustom" class="primary">创建题目</button>
+        <div id="customList" class="sub-list"></div>
+      </div>
+    </section>
+    <section id="history" class="page" hidden>
+      <div class="section-head"><div><h1>检测历史</h1><p>保留客观题回答、指纹采样及风险分级。概率只代表候选库内的相对排名。</p></div></div>
+      <div class="toolbar"><label>账号<select id="historyAccount"><option value="">全部账号</option></select></label></div>
+      <div id="historyRows" class="history-list"></div>
+    </section>
+    <section id="settings" class="page" hidden>
+      <div class="section-head"><div><h1>设置与隔离路由</h1><p>生产路由修改必须明确启用。请使用独立检测 Gateway Key。</p></div></div>
+      <div class="two-columns">
+        <div class="card form-card">
+          <h2>检测连接</h2>
+          <label>Magpie Gateway URL<input id="gatewayURL" placeholder="http://127.0.0.1:3425"></label>
+          <label>检测 Gateway Key（留空保持现有设置）<input id="gatewayKey" type="password" autocomplete="new-password" placeholder="••••••••"></label>
+          <label>每天最大上游请求次数<input id="dailyLimit" type="number" min="1" max="10000"></label>
+          <button id="saveConfig" class="primary">保存检测连接</button>
+        </div>
+        <div class="card form-card">
+          <h2>生产路由隔离</h2>
+          <label>专用检测 Key<select id="probeKey"><option value="">选择 Key</option></select></label>
+          <label>预期 Codex 账号数量<input id="expectedCount" type="number" min="2" max="100"></label>
+          <label class="check"><input id="enableSchedule" type="checkbox"> 开启账号定时检测</label>
+          <label class="check"><input id="enableRouting" type="checkbox"> **允许自动修改生产 Gateway Key 白名单**</label>
+          <label>开启自动隔离确认短语<input id="routeConfirm" placeholder="ENABLE_ALL_PRODUCTION_KEYS"></label>
+          <button id="saveRoute" class="primary">保存路由策略</button>
+          <div class="actions-inline"><button id="previewRoute" class="subtle">预览路由</button><button id="restoreRoute" class="danger">紧急恢复全部路由</button></div>
+          <pre id="routePreview" class="route-preview" hidden></pre>
+          <p class="hint">默认观察模式。隔离后检测 Key 保持允许，生产 Key 被限制。所有账号均异常时可能触发安全拒绝；不可将空白名单写作全量隔离。</p>
+        </div>
+      </div>
+      <div class="card small-card"><h2>固定策略</h2><p>正常：每 1 小时；首次错误：2 分钟复测。连续 3 次错误暂停路由并做 3 次指纹采样。指纹明显异常：每 48 小时复测；指纹正常或不可判：首次 6 小时，之后每 24 小时；两次客观题正确、间隔 2 分钟，恢复路由。</p></div>
+    </section>
+  </main>
+  <footer>Codex Guard · 独立插件开发版 · 仅管理通过所配置 Gateway Key 的业务流量</footer>
+</div>
+</body>
+</html>

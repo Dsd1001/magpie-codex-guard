@@ -1,0 +1,13 @@
+/bin/
+/dist/
+/data/
+/node_modules/
+
+# Local credentials and runtime state must never enter the public repository.
+.env
+.env.*
+*.db*
+*.sqlite*
+*.pem
+*.key
+.DS_Store

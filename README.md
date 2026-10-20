@@ -1,0 +1,84 @@
+# Magpie Codex Guard
+
+> 独立的 Codex 账号质量检测与路由隔离插件。**当前是 alpha 开发版；尚未经过 sub2 线上兼容性和真实账号指纹阈值验证，不应直接替换生产插件。**
+
+本项目独立初始化 Git 仓库，**不是 GitHub Fork**。基于原 [Magpie Account Intelligence Check](https://github.com/mu-zi-lee/magpie-intelligence-check) 的 MIT 许可代码精简重构；本地指纹评分算法依据 [Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector) 的 MIT 许可实现。分别保留了原版权声明。
+
+## 只做 Codex 账号检测
+
+- 从 Magpie 的 `logins.json` 只读提取 Codex 账号稳定 ID 和邮箱，**不导出 OAuth 凭证**。
+- 每次通过独立 Gateway Key 的 `X-Magpie-Account` 固定一个订阅账号，账号无法解析就取消请求，不允许随机切换。
+- 客观题：保留牛奶题和可配置的自定义自动判分题。题库支持多选与顺序轮换；失败及隔离后始终复测同一题。
+- **连续 3 次客观题错误**后，先从生产业务路由排除该账号，再发送 3 次模型指纹挑战。
+- Go 本地评分：使用固定版本的 `lm-detector shared-detector-v2`（60 个候选模型），不依赖官网评分 API，也不向外部评分服务发送账号或 Gateway Key。
+- 自动隔离影响全部已管理的生产 Gateway Key，**检测专用 Key 保持可用**；不删除、不停用 Codex 登录本身。
+- 账号历史、两种风险级别和下次复测时间写入专用 SQLite 数据目录，服务重启后原样继续。
+
+不再提供原插件的模型级质量门禁、模型级测试、HTML/SVG 输出预览或 Cloudflare 临时控制台。
+
+## 隔离和恢复规则
+
+| 场景 | 行为 |
+|---|---|
+| 正常账号 | 每 1 小时检测一次客观题 |
+| 客观题第 1、2 次错误 | 相同题目每 2 分钟复测 |
+| 连续 3 次有效回答错误 | 保存持久化隔离记录，**立即同步生产 Key 路由**，然后进行 3 次指纹采样 |
+| 指纹明确强烈偏离预期类别 | **高风险**：固定每 48 小时复测（0、48、96、144h……） |
+| 指纹与预期一致，或无法判定 / 采样不足 / 超时 | **低风险**：首次隔离 6 小时，此后每 24 小时（0、6、30、54h……） |
+| 到期复测首次客观题正确 | 2 分钟后使用同一客观题确认 |
+| 连续 2 次有效回答正确 | 取消持久化隔离并立即恢复允许的生产账号路由 |
+| 429、超时、HTTP 不可用 | 不算客观题失败，不算恢复成功；按中性重试处理 |
+
+**每轮指纹检测需要 3 次独立请求，不能把 3 个回答算成 3 次错误。** 账号的 `NextCheckAt`、隔离起始时间、风险等级和指纹库版本均持久保存。
+
+### 所有账号都被隔离时会怎样？
+
+Magpie 的 Gateway Key 账号白名单遵循 **“空列表允许全部账号”**，且仅列出其他 Provider 的账号也不会禁止 Codex，因此绝不写入空白名单或伪造不存在的 Codex ID。
+
+如果某个生产 Key 已没有任何允许的健康 Codex 账号，**Codex Guard 会把该生产 Key 暂时设为 `off=true`**；这会使该 Key 关联的其他 Provider API 也一起暂停。专用检测 Key 始终保持启用状态。健康账号恢复后，插件还原该 Key 最初的 `off` 状态和账号范围；原本就停用的 Key 不会被误开启。全部变更使用 Magpie 相同的文件锁、原子写入、写前日志和写后验证。
+
+只有**通过受管理的 Gateway Key** 进入的业务 API 会受到限制。绕过这些 Key 的直连、未管理的 API 入口不受本插件保证。
+
+## 安装与构建（开发阶段）
+
+当前工作目录：`sub2api/magpie-codex-guard`。
+
+需要 Go 1.26+，制作发布包还需要 Node/npm（只用于 Magpie 插件加载器及开发打包；**没有额外的常驻 Node 判分服务**）：
+
+```sh
+go test ./...
+go test -race ./internal/check ./internal/fingerprint
+go vet ./...
+npm ci
+npm run test:ui
+npm run build:release
+```
+
+构建脚本生成 `bin/codex-guard-linux-amd64`、`bin/codex-guard-linux-arm64`、`bin/codex-guard-darwin-arm64`，以及 `dist/magpie-codex-guard-*.tgz`。Magpie Node 插件入口为 `plugin/index.mjs`。实际插件安装方法以 Magpie 当前版本的插件管理页面和发布包格式为准。
+
+初次数据目录：`~/.config/magpie-codex-guard`，与旧版 `~/.config/magpie-account-quality-check` 完全分离。**不会自动接管旧插件的数据或隔离状态。**
+
+### 上线前安全要求
+
+1. 备份生产 `caller-keys.json`、旧插件数据库和历史隔离列表。
+2. 完成服务隔离的迁移窗口，确保旧、新插件 **不会同时修改相同生产 Gateway Key**。在确认新插件接管之前，必要时暂停业务 Gateway Key，避免临时放行旧隔离账号。
+3. 确认 Magpie 版本支持稳定账号 ID、专用 Gateway Key、`X-Magpie-Account` 固定账号和文件锁语义。
+4. 先开 **观察模式**。用真实账号验证指纹预测、风险分级和容器资源上限，再显式启用自动隔离。
+5. 模型指纹是参考库内相对统计排名，**不是账号身份的密码学验证**。当前高风险阈值为候选排名首位概率至少 0.90 且预期类别概率低于 0.03；这些阈值尚未经你的真实账号样本验证。
+6. 预留管理后台的紧急恢复能力。发生外部改动或写前日志未结束时停止自动覆盖并要求人工核对。
+
+## 测试覆盖
+
+- 多账号固定路由：3 次客观题失败 + 3 次指纹采样、生产白名单同步、2 次客观题恢复。
+- 低风险首次 6 小时后 24 小时、高风险固定 48 小时、重启后保留持久状态。
+- 所有账号异常时生产 Key 停用、部分恢复后安全启用、原本停用的 Key 不得意外开启。
+- 并发竞态检测、管理员外部修改冲突、专用检测 Key 不受生产隔离影响。
+- 采样遇到 429 时强制为指纹无法判定，按低风险处理且计入实际发起的请求数。
+- **16 组真实公开参考回答**与 lm-detector 原版 JavaScript 校准分数及候选排序对比（容许数值误差 1e-6）。
+- 使用 jsdom 的浏览器 DOM 模拟测试：邮箱文本安全、手动账号选择、题库保存、路由预览（尚未在实际浏览器人工验收）。
+
+详见 [设计与迁移说明](docs/architecture.md)。
+
+## 许可证与致谢
+
+MIT。原插件源码的许可声明见 [LICENSE](LICENSE)，lm-detector 评分算法和参考数据的许可声明见 [licenses/lm-detector.MIT.txt](licenses/lm-detector.MIT.txt)。上游是算法/数据的来源，**不提供远程评分 API**，本项目不会向上游站点发送生产 Key。
