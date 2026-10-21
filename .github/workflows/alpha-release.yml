@@ -1,7 +1,7 @@
 name: Build Codex Guard Alpha Release
 on:
   push:
-    branches: [main, 'release/roster-swap-alpha14']
+    branches: [main]
     paths:
       - '.github/workflows/alpha-release.yml'
       - 'cmd/**'
@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.14 backend: retain high-risk tombstones for deleted Codex logins, skip stale probes, opt-in live account monitoring sync, explicit safe administrator approval of newly added production Codex accounts, never overwrite production allowlists in the approval flow."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.15: fixes deleted/replaced Codex account monitoring while preserving quarantines, supports opt-in roster auto-sync and explicit live production scope approval, SHA-pins alpha.14 Go backend."

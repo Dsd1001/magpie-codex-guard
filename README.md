@@ -56,7 +56,7 @@ Magpie 的 Gateway Key 账号白名单遵循 **“空列表允许全部账号”
 
 ## 直接在 Magpie 中安装（GitHub）
 
-**版本说明：** 后端构建阶段为 `0.1.0-alpha.14`，在保留 alpha.13 行为的基础上修复账号替换时的隔离留档与生产白名单审批；对应的安装器版本将在后续阶段固定 SHA-256。新增「模型指纹检测」题目类型、手动指纹检测、预期参考模型下拉框、可选 24 小时周期性采样；已有安装默认保持三次客观题错误后指纹复核。插件版本与后端 Release 不同是预期行为，升级后请重新打开临时管理控制台。
+**版本说明：** 当前插件为 `0.1.0-alpha.15`，固定 SHA-256 校验 `v0.1.0-alpha.14` Go 后端，解决删除/新增 Codex 登录引起的调度中断并提供安全的白名单审批。新增「模型指纹检测」题目类型、手动指纹检测、预期参考模型下拉框、可选 24 小时周期性采样；已有安装默认保持三次客观题错误后指纹复核。插件版本与后端 Release 不同是预期行为，升级后请重新打开临时管理控制台。
 
 在 **Magpie → 设置 → 插件** 页面底部的「已有想装的？」输入框中粘贴：
 
@@ -70,7 +70,7 @@ github:Dsd1001/magpie-codex-guard
 magpie plugin add github:Dsd1001/magpie-codex-guard
 ```
 
-**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件会在首次启动时从 [v0.1.0-alpha.12 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.12) 自动下载所需的预编译程序，校验安装包及可执行文件的固定 SHA-256 后缓存到独立数据目录。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** `alpha.12` 的三个 Go 二进制与 Release 安装包均固定 SHA-256；更新插件后会自动使用独立的新缓存目录，不再沿用旧 `alpha.10` 后端。
+**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件会在首次启动时从 [v0.1.0-alpha.14 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.14) 自动下载所需的预编译程序，校验安装包及可执行文件的固定 SHA-256 后缓存到独立数据目录。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** `alpha.14` 的三个 Go 二进制与 Release 安装包均固定 SHA-256；更新插件后会自动使用独立的新缓存目录，不再沿用旧 `alpha.12` 后端。
 
 **生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
 
