@@ -37,17 +37,6 @@ github:Dsd1001/magpie-codex-guard
 | 账号增删与白名单 | 旧隔离账号删除后仍留档、停止无效检测；新增监测目标可选自动同步；生产白名单扩大须管理员确认 |
 | 安全约束 | 只管理受控生产 Gateway Key；检测 Key 独立使用；冲突时拒绝危险的路由写入，持久化状态可在重启后恢复 |
 
-## GitHub 自动收录（项目维护者）
-
-Magpie 的「非官方插件 · GitHub」从 GitHub 仓库 Topic 自动发现插件，**不需要 npm 发布或提交社区仓库 PR**。本仓库已经具备公开、非 Fork、未归档、根目录有 `package.json`、插件入口已提交等基本条件。
-
-仓库维护者只需在 GitHub 仓库首页 **About → 设置（齿轮）→ Topics** 添加：
-
-```text
-magpie-plugin
-```
-
-Magpie 会定期查询 GitHub（通常不超过约 10 分钟刷新一次缓存），之后就可能显示在 **插件 → 发现 → 非官方插件 · GitHub**。此处的「非官方」表示**未经 Magpie 官方审核**，不代表已获得官方认证；安装前仍应审阅代码和生产路由权限。当前直接 GitHub 安装地址仍为 `github:Dsd1001/magpie-codex-guard`。
 
 ## 只做 Codex 账号检测
 
@@ -126,24 +115,6 @@ magpie plugin add github:Dsd1001/magpie-codex-guard
 
 注意：Cloudflare 承担 HTTPS 转发，控制台内可修改业务路由，因此一次性链接视为管理凭证，不能公开分享。**Go 控制台始终监听 `127.0.0.1`，Cloudflare 官方客户端直接将随机 HTTPS 域名转发到该端口**；Go 服务复用原插件已验证的 Host/Origin、一次性登录和会话校验逻辑。测试期间请先保持**自动隔离关闭**；升级已安装的 Codex Guard 后，必须重新进入插件登录流程，旧的本机 URL 不能变成公网 URL。
 
-## 本地构建（开发阶段）
-
-当前工作目录：`sub2api/magpie-codex-guard`。
-
-需要 Go 1.26+，制作发布包还需要 Node/npm（只用于 Magpie 插件加载器及开发打包；**没有额外的常驻 Node 判分服务**）：
-
-```sh
-go test ./...
-go test -race ./internal/check ./internal/fingerprint
-go vet ./...
-npm ci
-npm run test:ui
-npm run build:release
-```
-
-构建脚本生成 `bin/codex-guard-linux-amd64`、`bin/codex-guard-linux-arm64`、`bin/codex-guard-darwin-arm64`，以及 `dist/magpie-codex-guard-*.tgz`。Magpie Node 插件入口为 `plugin/index.mjs`。实际插件安装方法以 Magpie 当前版本的插件管理页面和发布包格式为准。
-
-初次数据目录：`~/.config/magpie-codex-guard`，与旧版 `~/.config/magpie-account-quality-check` 完全分离。**不会自动接管旧插件的数据或隔离状态。**
 
 ### 上线前安全要求
 
