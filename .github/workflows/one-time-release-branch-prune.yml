@@ -7,7 +7,7 @@ permissions:
   contents: write
 jobs:
   prune:
-    if: github.repository == 'Dsd1001/magpie-codex-guard' && github.event.head_commit.message == 'chore: one-time prune old release branches'
+    if: "github.repository == 'Dsd1001/magpie-codex-guard' && github.event.head_commit.message == 'chore: one-time prune old release branches'"
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
