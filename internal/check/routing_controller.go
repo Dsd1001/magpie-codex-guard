@@ -340,6 +340,14 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	if err = verifyProbeKey(s.state, keys); err != nil {
 		return RoutingPreview{}, err
 	}
+	if !restore {
+		// A deletion-only administrator edit cannot widen access.
+		// Adopt it in the PRIVATE baseline after verifying all existing
+		// quarantines remain excluded. This does not write caller-keys.json.
+		if _, err := s.acceptSafeNarrowingsLocked(keys, codex); err != nil {
+			return RoutingPreview{}, err
+		}
+	}
 	projected := s.state
 	if restore {
 		projected.Route.Quarantined = nil

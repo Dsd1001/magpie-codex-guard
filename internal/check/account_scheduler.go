@@ -12,6 +12,13 @@ import (
 // process restarts. A pending fingerprint is prioritized ahead of healthy
 // hourly probes; an isolated account's held model is the only recovery target.
 func (s *Service) ScheduleOneAccount(now time.Time) error {
+	return s.scheduleOneAccount(now, true)
+}
+
+// Under an unresolved route conflict normal read-only checks can continue,
+// but a third failure must not create a NEW hold without the capability to
+// synchronize production keys. Already isolated accounts can still recover.
+func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 	s.mu.Lock()
 	if !s.state.Route.ScheduleEnabled || s.accountProbeActive || s.state.Route.Pending {
 		s.mu.Unlock()
@@ -37,6 +44,9 @@ func (s *Service) ScheduleOneAccount(now time.Time) error {
 			continue
 		}
 		hold, held := s.state.Holds[t.Account]
+		if !allowNewHolds && !held && t.ConsecutiveFails >= 2 {
+			continue
+		}
 		if held && hold.Model != t.Model {
 			continue
 		}
@@ -140,17 +150,24 @@ func (s *Service) schedulerTick(now time.Time) {
 	auto := s.state.Route.AutoApply
 	pending := s.state.Route.Pending
 	s.mu.Unlock()
+	allowNewHolds := true
 	if auto && !pending {
 		ctx, cancel := context.WithTimeout(s.ctx, 9*time.Second)
 		_, err := s.ApplyRouting(ctx, false)
 		cancel()
 		if err != nil {
 			s.noteSchedulerError(err)
-			// A production-routing conflict must not proceed as if isolated.
-			return
+			// Never overwrite out-of-band edits. Only permit read-only
+			// checks when the LIVE gateway still excludes EVERY held account.
+			// Pending and unsafe quarantines remain blocked.
+			if checkErr := s.verifySafeReadOnlyProbes(); checkErr != nil {
+				s.noteSchedulerError(checkErr)
+				return
+			}
+			allowNewHolds = false
 		}
 	}
-	if err := s.ScheduleOneAccount(now); err != nil {
+	if err := s.scheduleOneAccount(now, allowNewHolds); err != nil {
 		s.noteSchedulerError(err)
 	}
 }

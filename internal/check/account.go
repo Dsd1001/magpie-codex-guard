@@ -238,7 +238,7 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 		}
 	}
 	if needFinger {
-		if !active || s.routeHasHold(account) {
+		if !active || s.routeHasHold(account) || s.VerifyLiveHold(account) {
 			s.collectFingerprint(parent, account, model)
 		} else {
 			s.noteSchedulerError(errors.New("生产路由未成功隔离，已停止指纹复核，等待路由修复"))
@@ -377,9 +377,12 @@ func (s *Service) TriggerPendingFingerprint(account string) error {
 			cancel()
 			if err != nil {
 				s.noteSchedulerError(err)
-				return
-			}
-			if !s.routeHasHold(account) {
+				// A pending fingerprint is allowed to resume ONLY if the
+				// current production keys demonstrably exclude all holds.
+				if !s.VerifyLiveHold(account) {
+					return
+				}
+			} else if !s.routeHasHold(account) && !s.VerifyLiveHold(account) {
 				return
 			}
 		}
