@@ -58,7 +58,7 @@ async function action(fn){
  try{await fn();notice('操作已完成');await refresh()}catch(e){notice(e?.message||String(e),true)}
 }
 const accounts=()=>current?.accounts||[];
-function email(id){return accounts().find(a=>a.id===id||a.user===id)?.user||'账号信息不可用'}
+function email(id){return accounts().find(a=>a.id===id||a.user===id)?.user||'账号已从 Magpie 删除（隔离留档）'}
 function option(select,entries,placeholder){
  const last=select.value;
  select.replaceChildren(new Option(placeholder,''));
@@ -68,7 +68,8 @@ function option(select,entries,placeholder){
 function renderSummary(){
  const s=current?.state;
  if(!s)return;
- const targets=Object.values(s.account_targets||{}).filter(t=>t.enabled);
+ const live=new Set(accounts().map(a=>a.id));
+ const targets=Object.values(s.account_targets||{}).filter(t=>t.enabled&&live.has(t.account));
  const held=s.holds||{};
  const ids=[...new Set(targets.map(t=>t.account))];
  $('statAccounts').textContent=String(ids.length);
@@ -108,6 +109,7 @@ function renderAccounts(){
  for(const t of targets){
   const tr=elem('tr');
   const hold=holds[t.account];
+  const missing=t.missing||!accounts().some(a=>a.id===t.account);
   const mail=elem('td','email',email(t.account));
   const model=elem('td','mono',t.model);
   const st=elem('td');
@@ -115,6 +117,7 @@ function renderAccounts(){
   const label=elem('span',`pill ${(hold?.risk==='high'?'high':hold?.risk==='low'||t.state==='suspect'?'low':t.state==='passed'&&!hold?'ok':'pending')}`,
    hold?(hold.risk==='high'?'高风险隔离':hold.risk==='low'?'低风险隔离':'指纹复核中'):(stateLabels[t.state]?.[0]||t.state));
   st.append(label);
+  if(missing)st.append(elem('div','hint','账号已删除 · 停止检测 · 隔离留档保留'));
   if(hold&&s.route?.auto_apply&&!s.route?.quarantined?.[t.account]){
    const warning=elem('div','hint','路由尚未确认排除');st.append(warning);
   }
@@ -129,7 +132,8 @@ function renderAccounts(){
    if(!confirm('确定移除该账号的监测目标？历史记录不会删除。'))return;
    await api('/api/account-target','DELETE',{account:t.account,model:t.model});
   }));
-  if(hold){toggle.disabled=true;del.disabled=true}
+  if(hold||missing){toggle.disabled=true;del.disabled=true}
+  if(missing)test.disabled=true
   bar.append(test,toggle,del);ops.append(bar);
   tr.append(mail,model,st,due,ops);
   tbody.append(tr);
@@ -181,7 +185,8 @@ function chosenManualTarget(){
  return key?(current?.state?.account_targets||{})[key]:null;
 }
 function renderManual(){
- const targets=Object.entries(current?.state?.account_targets||{}).filter(([,t])=>t.enabled);
+ const live=new Set(accounts().map(a=>a.id));
+ const targets=Object.entries(current?.state?.account_targets||{}).filter(([,t])=>t.enabled&&live.has(t.account));
  option($('manualTarget'),targets.map(([key,t])=>[key,email(t.account)+' · '+t.model]),'选择已添加的监测目标');
  if(!$('manualTarget').value&&targets.length===1)$('manualTarget').value=targets[0][0];
  const promptList=(current?.prompts||[]).map(p=>[p.id,(p.kind==='fingerprint'?'指纹检测 · ':'客观题 · ')+p.name]);
@@ -246,6 +251,7 @@ function renderHistory(){
 }
 function renderSettings(){
  const s=current.state;
+ if(document.activeElement!==$('autoSyncAccountRoster'))$('autoSyncAccountRoster').checked=Boolean(s.route?.auto_sync_accounts);
  if(document.activeElement!==$('gatewayURL'))$('gatewayURL').value=s.config?.gateway_url||'';
  if(document.activeElement!==$('dailyLimit'))$('dailyLimit').value=s.config?.daily_limit||600;
  if(document.activeElement!==$('expectedCount'))$('expectedCount').value=s.route?.expected_codex_count||0;
@@ -294,6 +300,23 @@ $('addAll').onclick=()=>action(async()=>{
  if(!confirm('将所有已经登录的 Codex 账号加入该模型的监测列表？'))return;
  await api('/api/account-targets/discover','POST',{model,confirm:'ADD_ALL_CODEX_ACCOUNTS'});
 });
+$('syncAccountRoster').onclick=async()=>{
+ try{
+  const result=await api('/api/account-targets/sync','POST',{confirm:'SYNC_LIVE_CODEX_TARGETS'});
+  await refresh();
+  notice('账号已同步：Magpie 当前 '+result.live_count+' 个账号；新增监测 '+result.added+' 项，已删除账号留档 '+result.missing+' 项。');
+ }catch(e){notice('同步账号失败：'+(e?.message||String(e)),true)}
+};
+$('saveAutoSyncAccountRoster').onclick=async()=>{
+ const enabled=$('autoSyncAccountRoster').checked;
+ if(enabled&&!confirm('开启后自动监测 Magpie 新增加的 Codex 账号，将使用已有监测模型和独立检测 Key，消耗检测请求额度。不会自动扩大生产白名单。确认开启？'))return;
+ try{
+  await api('/api/account-targets/auto-sync','POST',{enabled,confirm:enabled?'AUTO_SYNC_CODEX_ACCOUNTS':''});
+  if(enabled)await api('/api/account-targets/sync','POST',{confirm:'SYNC_LIVE_CODEX_TARGETS'});
+  await refresh();
+  notice(enabled?'账号自动同步已启用；已从 Magpie 更新监测目标。':'账号自动同步已关闭；原有监测目标保留。');
+ }catch(e){notice('保存账号同步设置失败：'+(e?.message||String(e)),true)}
+};
 $('fingerprintAutomatic').onchange=()=>{$('fingerprintMode').disabled=!$('fingerprintAutomatic').checked};
 $('manualPrompt').onchange=updateFingerprintExpected;
 $('manualTarget').onchange=updateFingerprintExpected;
@@ -361,6 +384,12 @@ $('previewRoute').onclick=()=>action(async()=>{
  }
  $('routePreview').textContent=parts.join('\n');
  $('routePreview').hidden=false;
+});
+$('approveLiveScopes').onclick=()=>action(async()=>{
+ const agreed=confirm('确认以 Magpie 当前的生产 Gateway Key 白名单为准？只接受已登录且未隔离的 Codex 账号新增；不得新增被隔离账号。此操作不会写入生产 Key 文件，只会更新 Codex Guard 内部基线及审计记录。以后新增账号若触发隔离，插件将按新基线自动移除其生产路由。');
+ if(!agreed)return;
+ const result=await api('/api/routing/adopt-current','POST',{confirm:'APPROVE_CURRENT_PRODUCTION_SCOPES'});
+ notice('当前生产白名单已核对并采用，未修改 Gateway Key 文件，隔离记录保持不变。');
 });
 $('restoreRoute').onclick=()=>action(async()=>{
  const value=prompt('紧急恢复会清除全部隔离记录和自动隔离开关，请输入 RESTORE_ALL_PRODUCTION_KEYS');

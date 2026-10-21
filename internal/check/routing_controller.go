@@ -23,6 +23,7 @@ type RoutingState struct {
 	ExpectedCodexCount int                 `json:"expected_codex_count,omitempty"`
 	ProbeKeyID         string              `json:"probe_key_id,omitempty"`
 	ScheduleEnabled    bool                `json:"schedule_enabled"`
+	AutoSyncAccounts   bool                `json:"auto_sync_accounts,omitempty"`
 	AutoApply          bool                `json:"auto_apply"`
 	Baselines          map[string][]string `json:"baselines,omitempty"`
 	Expected           map[string][]string `json:"expected,omitempty"`
@@ -139,12 +140,33 @@ func routingKnownIDs(codex []CodexAccount) []string {
 // of degraded quality. Network/quota failures do not affect the counters.
 // routingExcluded is driven only by persisted account holds. A failed probe
 // that has not reached the fingerprint stage is never enough to isolate.
+// routingExcluded includes tombstones for removed Magpie logins. A high-risk
+// account must not vanish from quarantine merely because the login was
+// deleted. Only trusted persisted stable IDs (and a verified quarantine
+// journal/target) are treated as tombstones; unknown names fail closed.
 func routingExcluded(state State, codex []CodexAccount) ([]string, error) {
 	excluded := map[string]bool{}
-	for account := range state.Holds {
-		stable, err := ResolveAccountID(codex, account)
+	for ref, hold := range state.Holds {
+		stable, err := ResolveAccountID(codex, ref)
 		if err != nil {
-			return nil, fmt.Errorf("隔离账号身份无法解析，拒绝放行：%w", err)
+			validStable := len(ref) == 16
+			for _, ch := range ref {
+				if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+					validStable = false
+					break
+				}
+			}
+			recorded := false
+			for _, t := range state.AccountTargets {
+				if t != nil && t.Account == ref && t.Model == hold.Model {
+					recorded = true
+					break
+				}
+			}
+			if !validStable || hold.Account != ref || (!state.Route.Quarantined[ref] && !recorded) {
+				return nil, fmt.Errorf("隔离账号身份无法解析，拒绝放行：%w", err)
+			}
+			stable = ref
 		}
 		excluded[stable] = true
 	}
@@ -226,7 +248,16 @@ func makeRoutingPreview(state State, keys []privateGatewayKey, codex []CodexAcco
 	if err != nil {
 		return RoutingPreview{}, nil, nil, err
 	}
-	plan, err := PlanCodexQuarantine(source, route.ProbeKeyID, routingKnownIDs(codex), excluded)
+	// The planner also needs removed-but-held stable IDs in its known set,
+	// so it continues to filter them out of historical baseline scopes.
+	// AccountCount remains the true live Magpie login count.
+	planKnown := routingKnownIDs(codex)
+	for _, id := range excluded {
+		if !slices.Contains(planKnown, id) {
+			planKnown = append(planKnown, id)
+		}
+	}
+	plan, err := PlanCodexQuarantine(source, route.ProbeKeyID, planKnown, excluded)
 	if err != nil {
 		return RoutingPreview{}, nil, nil, err
 	}

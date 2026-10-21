@@ -36,6 +36,12 @@
         <button id="addAccount" class="primary">添加监测</button>
         <button id="addAll" class="subtle">添加全部账号</button>
       </div>
+      <div class="actions-inline">
+        <button id="syncAccountRoster" class="subtle">同步 Magpie 账号</button>
+        <label class="check"><input id="autoSyncAccountRoster" type="checkbox"> 账号增删后自动同步监测目标</label>
+        <button id="saveAutoSyncAccountRoster" class="subtle">保存同步设置</button>
+      </div>
+      <p class="hint">同步只修改检测目标，不影响 Gateway Key 白名单。已删除账号会显示为隔离留档并停止检测；旧隔离记录会保留。新增账号从已有监测模型继承检测设置，自动同步需要手动开启。</p>
       <p id="modelHelp" class="hint model-help" role="status">正在从 Magpie 本机读取 Codex 模型…</p>
       <div class="card table-scroll"><table><thead><tr><th>账号</th><th>模型</th><th>状态</th><th>下次检测</th><th>操作</th></tr></thead><tbody id="accountRows"><tr><td colspan="5" class="empty">正在读取账号信息…</td></tr></tbody></table></div>
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
@@ -102,8 +108,9 @@
           <label class="check"><input id="enableRouting" type="checkbox"> **允许自动修改生产 Gateway Key 白名单**</label>
           <label>开启自动隔离确认短语<input id="routeConfirm" placeholder="ENABLE_ALL_PRODUCTION_KEYS"></label>
           <button id="saveRoute" class="primary">保存路由策略</button>
-          <div class="actions-inline"><button id="previewRoute" class="subtle">预览路由</button><button id="restoreRoute" class="danger">紧急恢复全部路由</button></div>
+          <div class="actions-inline"><button id="previewRoute" class="subtle">预览路由</button><button id="approveLiveScopes" class="subtle">确认采用当前白名单</button><button id="restoreRoute" class="danger">紧急恢复全部路由</button></div>
           <pre id="routePreview" class="route-preview" hidden></pre>
+          <p class="hint">如果你在 Magpie 手动给生产 Key 新增了账号，导致路由冲突，可点击「确认采用当前白名单」。此操作严格检查所有隔离账号仍被排除，只更新插件内部基线，不修改生产 Key 文件。删除的账号不会重新获得访问权限。</p>
           <p class="hint">默认观察模式。隔离后检测 Key 保持允许，生产 Key 被限制。所有账号均异常时可能触发安全拒绝；不可将空白名单写作全量隔离。</p>
         </div>
       </div>

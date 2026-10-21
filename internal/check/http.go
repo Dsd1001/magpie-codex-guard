@@ -188,6 +188,38 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		}
 		writeJSON(w, map[string]any{"count": count})
 	})
+	mux.HandleFunc("POST /api/account-targets/sync", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Confirm string `json:"confirm"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.Confirm != "SYNC_LIVE_CODEX_TARGETS" {
+			apiError(w, errors.New("确认短语错误"), 400)
+			return
+		}
+		result, err := s.SyncLiveAccountTargets()
+		if err != nil {
+			apiError(w, err, 409)
+			return
+		}
+		writeJSON(w, result)
+	})
+	mux.HandleFunc("POST /api/account-targets/auto-sync", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Enabled bool   `json:"enabled"`
+			Confirm string `json:"confirm"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if err := s.ConfigureAccountAutoSync(input.Enabled, input.Confirm); err != nil {
+			apiError(w, err, 409)
+			return
+		}
+		writeJSON(w, map[string]bool{"enabled": input.Enabled})
+	})
 	mux.HandleFunc("POST /api/account-test", func(w http.ResponseWriter, r *http.Request) {
 		var input struct{ Account, Model, Prompt string }
 		if !decode(w, r, &input) {
@@ -307,6 +339,20 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 			return
 		}
 		writeJSON(w, plan)
+	})
+	mux.HandleFunc("POST /api/routing/adopt-current", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Confirm string `json:"confirm"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		preview, err := s.ApproveCurrentScopes(r.Context(), input.Confirm)
+		if err != nil {
+			apiError(w, err, 409)
+			return
+		}
+		writeJSON(w, preview)
 	})
 	mux.HandleFunc("POST /api/routing/restore", func(w http.ResponseWriter, r *http.Request) {
 		var input struct{ Confirm string }

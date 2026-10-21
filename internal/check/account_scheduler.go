@@ -19,6 +19,21 @@ func (s *Service) ScheduleOneAccount(now time.Time) error {
 // but a third failure must not create a NEW hold without the capability to
 // synchronize production keys. Already isolated accounts can still recover.
 func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
+	// Never repeatedly probe a deleted login. Its held account ID stays in
+	// SQLite (tombstone) and in the route exclusion set until explicitly
+	// retired; a future login with the same stable ID stays quarantined.
+	dir, err := MagpieDir()
+	if err != nil {
+		return err
+	}
+	discovered, err := DiscoverCodexAccounts(dir)
+	if err != nil {
+		return err
+	}
+	live := map[string]bool{}
+	for _, a := range discovered {
+		live[a.ID] = true
+	}
 	s.mu.Lock()
 	if !s.state.Route.ScheduleEnabled || s.accountProbeActive || s.state.Route.Pending {
 		s.mu.Unlock()
@@ -40,7 +55,7 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		return errors.New("没有可自动判分的客观题")
 	}
 	for _, t := range s.state.AccountTargets {
-		if t == nil || !t.Enabled {
+		if t == nil || !t.Enabled || !live[t.Account] {
 			continue
 		}
 		hold, held := s.state.Holds[t.Account]
@@ -146,6 +161,15 @@ func (s *Service) StartAccountScheduler() {
 	}()
 }
 func (s *Service) schedulerTick(now time.Time) {
+	s.mu.Lock()
+	syncAccounts := s.state.Route.AutoSyncAccounts
+	s.mu.Unlock()
+	if syncAccounts {
+		if _, err := s.SyncLiveAccountTargets(); err != nil &&
+			err.Error() != "检测运行中，稍后重试账号同步" {
+			s.noteSchedulerError(err)
+		}
+	}
 	s.mu.Lock()
 	auto := s.state.Route.AutoApply
 	pending := s.state.Route.Pending

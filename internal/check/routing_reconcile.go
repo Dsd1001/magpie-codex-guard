@@ -234,3 +234,158 @@ func (s *Service) VerifyLiveHold(account string) bool {
 	_, held := s.state.Holds[account]
 	return held && !s.state.Route.Pending
 }
+
+// ApproveCurrentScopes explicitly accepts an administrator's already-applied
+// finite production whitelist changes, including NEW login accounts. This
+// function NEVER writes caller-keys.json and never changes Holds. Unknown
+// accounts, live quarantined accounts, probe-key edits, empty allowlists,
+// changed key statuses and uncommitted transactions are rejected.
+func (s *Service) ApproveCurrentScopes(ctx context.Context, confirm string) (RoutingPreview, error) {
+	if confirm != "APPROVE_CURRENT_PRODUCTION_SCOPES" {
+		return RoutingPreview{}, errors.New("确认短语错误：拒绝采用生产白名单")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	route := s.state.Route
+	if !route.AutoApply || route.Pending {
+		return RoutingPreview{}, errors.New("自动隔离尚未启用或路由事务未完成")
+	}
+	dir, err := MagpieDir()
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	lock := flock.New(filepath.Join(dir, "caller-keys.json.lock"))
+	wait, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	locked, err := lock.TryLockContext(wait, 20*time.Millisecond)
+	if err != nil || !locked {
+		return RoutingPreview{}, errors.New("无法取得 Gateway Key 文件锁")
+	}
+	defer lock.Unlock()
+
+	codex, _, keys, err := readRouterInputs(dir)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	if route.ExpectedCodexCount > 0 && len(codex) != route.ExpectedCodexCount {
+		return RoutingPreview{}, errors.New("实际账号数量与预期不一致，请先检查账号列表")
+	}
+	if err = verifyProbeKey(s.state, keys); err != nil {
+		return RoutingPreview{}, err
+	}
+	if err = verifyHeldAccountsExcluded(s.state, keys, codex); err != nil {
+		return RoutingPreview{}, err
+	}
+
+	known := map[string]bool{}
+	for _, a := range codex {
+		known[a.ID] = true
+	}
+	excluded, err := routingExcluded(s.state, codex)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	holds := map[string]bool{}
+	for _, id := range excluded {
+		holds[strings.ToLower(id)] = true
+	}
+	expected := clonedScopes(route.Expected)
+	baselines := clonedScopes(route.Baselines)
+	changes := 0
+	for _, key := range keys {
+		previous, tracked := route.Expected[key.ID]
+		off, offTracked := route.ExpectedOff[key.ID]
+		if key.ID == route.ProbeKeyID {
+			if tracked && (!slices.Equal(key.Accounts, previous) || !offTracked || key.Off != off) {
+				return RoutingPreview{}, errors.New("检测 Key 的白名单/启用状态发生变化，禁止自动采用")
+			}
+			continue
+		}
+		baseline, baselineKnown := baselines[key.ID]
+		if !tracked || !baselineKnown || !offTracked || off != key.Off {
+			return RoutingPreview{}, errors.New("存在未管理的 Key 或启用状态变化，需要人工单独核对")
+		}
+		if slices.Equal(previous, key.Accounts) {
+			// Still remove orphaned logins from the *private* baseline on
+			// adoption, so their access cannot be restored in the future.
+			continue
+		}
+		if len(key.Accounts) == 0 {
+			return RoutingPreview{}, errors.New("空白名单表示允许全部账号，拒绝采用")
+		}
+		// All account refs must be unique; duplicates/reordering cannot be
+		// treated as an authorization change.
+		present := map[string]bool{}
+		for _, ref := range key.Accounts {
+			if present[ref] {
+				return RoutingPreview{}, errors.New("生产 Key 出现重复账号")
+			}
+			present[ref] = true
+		}
+		// Preserve historical baseline for currently held *live* logins,
+		// but drop every deleted login from that baseline even if held.
+		updated := make([]string, 0, len(baseline)+len(key.Accounts))
+		for _, ref := range baseline {
+			provider, id, ok := strings.Cut(ref, "/")
+			if ok && strings.EqualFold(provider, "codex") && !known[id] {
+				continue
+			}
+			if slices.Contains(previous, ref) && !present[ref] {
+				continue // explicit administrator deletion
+			}
+			updated = append(updated, ref)
+		}
+		for _, ref := range key.Accounts {
+			if slices.Contains(previous, ref) {
+				continue
+			}
+			provider, id, valid := strings.Cut(ref, "/")
+			if !valid || !strings.EqualFold(provider, "codex") || !known[id] || holds[strings.ToLower(id)] {
+				return RoutingPreview{}, errors.New("生产 Key 新增条目不是当前已登录且未隔离的 Codex 账号，禁止采用")
+			}
+			if !slices.Contains(updated, ref) {
+				updated = append(updated, ref)
+			}
+		}
+		if len(updated) == 0 {
+			return RoutingPreview{}, errors.New("基线不能为空")
+		}
+		baselines[key.ID] = updated
+		expected[key.ID] = slices.Clone(key.Accounts)
+		changes++
+	}
+	if changes == 0 {
+		return RoutingPreview{}, errors.New("没有需要确认的新生产白名单变化")
+	}
+	projected := s.state
+	projected.Route = route
+	projected.Route.Expected = expected
+	projected.Route.Baselines = baselines
+	preview, _, _, err := makeRoutingPreview(projected, keys, codex)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	for _, p := range preview.Keys {
+		if p.Changed {
+			return RoutingPreview{}, fmt.Errorf("当前白名单与隔离后的安全路由不一致（%s：%d→%d），禁止采用", p.KeyID, len(p.Before), len(p.After))
+		}
+	}
+
+	old := s.state.Route
+	s.state.Route.Expected = expected
+	s.state.Route.Baselines = baselines
+	s.state.Route.LastError = ""
+	s.state.Route.Audit = append(s.state.Route.Audit, RoutingAudit{
+		At: time.Now(), Action: "admin-scope-change-approved",
+		KeyCount: len(keys), Quarantined: slices.Clone(excluded),
+	})
+	if len(s.state.Route.Audit) > 100 {
+		s.state.Route.Audit = slices.Clone(s.state.Route.Audit[len(s.state.Route.Audit)-100:])
+	}
+	if err := s.store.Save(s.state); err != nil {
+		s.state.Route = old
+		return RoutingPreview{}, fmt.Errorf("无法保存已确认的白名单基线：%w", err)
+	}
+	preview.LastError = ""
+	return preview, nil
+}

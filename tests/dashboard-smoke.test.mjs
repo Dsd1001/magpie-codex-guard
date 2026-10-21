@@ -48,6 +48,18 @@ function fixture({modelsError=''}={}){
    if(target)target.fingerprint_expected=req.expected;
    payload={ok:true};
   }
+  else if(path==='/api/account-targets/sync'&&method==='POST'){
+   state.state.account_targets['aaa\x1fcodex/gpt-6.1-sol']??={account:'aaa',model:'codex/gpt-6.1-sol',enabled:true,state:'passed'};
+   payload={live_count:2,added:0,missing:0,restored:0};
+  }
+  else if(path==='/api/account-targets/auto-sync'&&method==='POST'){
+   state.state.route.auto_sync_accounts=Boolean(JSON.parse(options.body).enabled);
+   payload={enabled:state.state.route.auto_sync_accounts};
+  }
+  else if(path==='/api/routing/adopt-current'&&method==='POST'){
+   state.state.route.last_error='';
+   payload={mode:'active',keys:[],quarantined:[]};
+  }
   else if(path==='/api/config'&&method==='POST'){
    state.gateway_configured=true;
    state.state.config.gateway_url=JSON.parse(options.body).gateway_url;
@@ -218,5 +230,50 @@ test('manual fingerprint selects account, saves bank reference, then runs indepe
   await waitFor(()=>w.document.querySelector('#historyRows summary')?.textContent.includes('指纹不一致'));
   assert.equal(w.document.querySelector('#historyRows img'),null);
   await new Promise(resolve=>setTimeout(resolve,65));
+ }finally{dom.window.close()}
+});
+
+test('deleted monitored login is archived, never probeable, and excluded from live count',async()=>{
+ const {dom,w,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
+  state.state.account_targets={
+   'aaa\x1fcodex/gpt-6.1-sol':{account:'aaa',model:'codex/gpt-6.1-sol',enabled:true,state:'passed'},
+   'deleted-hex-id\x1fcodex/gpt-6.1-sol':{account:'deleted-hex-id',model:'codex/gpt-6.1-sol',enabled:true,missing:true,state:'quarantined_high'},
+  };
+  state.state.holds={'deleted-hex-id':{risk:'high'}};
+  w.document.querySelector('#refresh').click();
+  await waitFor(()=>w.document.querySelector('#accountRows').textContent.includes('账号已删除'));
+  assert.equal(w.document.querySelector('#statAccounts').textContent,'1');
+  assert.equal(w.document.querySelector('#statIsolated').textContent,'1');
+  const archived=[...w.document.querySelectorAll('#accountRows tr')].find(tr=>tr.textContent.includes('账号已删除'));
+  assert.ok(archived);
+  assert.match(archived.textContent,/隔离留档/);
+  assert.ok([...archived.querySelectorAll('button')].every(b=>b.disabled));
+  assert.equal(w.document.querySelector('#accountRows img'),null);
+ }finally{dom.window.close()}
+});
+
+test('roster sync and explicitly approved production allowlist never send raw credentials',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
+  w.document.querySelector('#syncAccountRoster').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/account-targets/sync'));
+  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('账号已同步'));
+  const auto=w.document.querySelector('#autoSyncAccountRoster');
+  auto.checked=true;
+  w.document.querySelector('#saveAutoSyncAccountRoster').click();
+  await waitFor(()=>state.state.route.auto_sync_accounts===true);
+  const req=calls.findLast(c=>c.path==='/api/account-targets/auto-sync');
+  assert.deepEqual(JSON.parse(req.options.body),{enabled:true,confirm:'AUTO_SYNC_CODEX_ACCOUNTS'});
+  assert.doesNotMatch(JSON.stringify(req.options.body),/Bearer |secret|token/i);
+  w.document.querySelector('[data-tab="settings"]').click();
+  w.document.querySelector('#approveLiveScopes').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/routing/adopt-current'));
+  assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/routing/adopt-current').options.body),{confirm:'APPROVE_CURRENT_PRODUCTION_SCOPES'});
+  assert.equal(state.state.route.last_error,'');
+  assert.equal(w.document.querySelector('#restoreRoute').disabled,false);
+  await new Promise(resolve=>setTimeout(resolve,80));
  }finally{dom.window.close()}
 });

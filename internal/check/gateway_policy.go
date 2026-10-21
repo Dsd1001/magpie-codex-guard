@@ -81,6 +81,16 @@ func PlanCodexQuarantine(keys []GatewayKeyScope, probeKeyID string, knownCodex, 
 		}
 		before := slices.Clone(k.Accounts)
 		after := slices.Clone(k.Accounts)
+		// A Gateway Key that the administrator already disabled must never
+		// have its allowlist rewritten. Off keys have no production traffic,
+		// and their original scope is retained for any explicit future review.
+		if !probe && k.Off {
+			out = append(out, PlannedKeyScope{
+				KeyID: k.ID, Before: before, After: after, Changed: false,
+				IsProbe: false, OffBefore: true, OffAfter: true,
+			})
+			continue
+		}
 		blocked := false
 		if !probe && len(excluded) > 0 {
 			hadCodex := false
