@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.15: fixes deleted/replaced Codex account monitoring while preserving quarantines, supports opt-in roster auto-sync and explicit live production scope approval, SHA-pins alpha.14 Go backend."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.16 backend: adds opt-in fingerprint question rotation with 3-sample scoring, preserves legacy modes, classifies ambiguous evidence as unavailable, and retains safe production isolation."

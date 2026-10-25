@@ -112,10 +112,10 @@ func (s *Service) DiscoverAccountTargets(model string) (int, error) {
 }
 func (s *Service) TriggerAccount(account, model, prompt string, manual bool) error {
 	if prompt == FingerprintPromptID {
-		if !manual {
-			return errors.New("指纹检测不能计入客观题失败次数")
+		if manual {
+			return s.TriggerFingerprint(account, model, true)
 		}
-		return s.TriggerFingerprint(account, model, true)
+		return s.TriggerAutomaticFingerprint(account, model)
 	}
 	if err := ValidateAccount(account); err != nil {
 		return err

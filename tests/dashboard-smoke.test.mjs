@@ -277,3 +277,57 @@ test('roster sync and explicitly approved production allowlist never send raw cr
   await new Promise(resolve=>setTimeout(resolve,80));
  }finally{dom.window.close()}
 });
+
+test('new fingerprint objective rotation option is opt-in and persists without changing older modes',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#promptOptions input[value="milk"]')?.checked===true);
+  w.document.querySelector('[data-tab="rules"]').click();
+  const mode=w.document.querySelector('#fingerprintMode');
+  const automatic=w.document.querySelector('#fingerprintAutomatic');
+  const rotate=w.document.querySelector('#rotatePrompts');
+  assert.equal(mode.value,'after_failures','old installations retain their current trigger');
+  rotate.checked=false;
+  mode.value='objective_rotation';
+  mode.dispatchEvent(new w.Event('change'));
+  assert.equal(automatic.checked,true);
+  assert.equal(rotate.checked,true,'fingerprint in objective rotation requires round robin');
+  w.document.querySelector('#saveAutoPrompts').click();
+  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
+  const post=calls.findLast(c=>c.path==='/api/auto-prompts');
+  assert.deepEqual(JSON.parse(post.options.body),{
+   prompt_ids:['milk'],rotate:true,fingerprint_mode:'objective_rotation',
+  });
+  await waitFor(()=>mode.value==='objective_rotation');
+  assert.match(w.document.querySelector('#rules .fingerprint-policy .hint').textContent,/连续 3 次强不一致/);
+  // Saving the new mode does not affect routing enable flags.
+  assert.equal(state.state.route.auto_apply,false);
+  await new Promise(resolve=>setTimeout(resolve,65));
+ }finally{dom.window.close()}
+});
+
+test('fingerprint-only question mode is allowed, but mixed unrotated configuration is rejected',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#promptOptions input[value="milk"]')?.checked===true);
+  w.document.querySelector('[data-tab="rules"]').click();
+  const mode=w.document.querySelector('#fingerprintMode');
+  mode.value='objective_rotation';
+  mode.dispatchEvent(new w.Event('change'));
+  const rotate=w.document.querySelector('#rotatePrompts');
+  rotate.checked=false;
+  const save=w.document.querySelector('#saveAutoPrompts');
+  const previous=calls.filter(c=>c.path==='/api/auto-prompts').length;
+  save.click();
+  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('请勾选按轮次顺序轮换'));
+  assert.equal(calls.filter(c=>c.path==='/api/auto-prompts').length,previous);
+  for(const box of w.document.querySelectorAll('#promptOptions input[type="checkbox"]'))box.checked=false;
+  save.click();
+  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
+  const body=JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body);
+  assert.deepEqual(body.prompt_ids,[],'the one new mode can select only fingerprint');
+  assert.equal(body.rotate,false);
+  assert.equal(state.state.route.auto_apply,false);
+  await new Promise(resolve=>setTimeout(resolve,65));
+ }finally{dom.window.close()}
+});

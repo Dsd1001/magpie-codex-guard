@@ -129,6 +129,17 @@ func selectAutomaticPrompt(t AccountTarget, isolated, rotate bool, prompts []Pro
 	if len(prompts) == 0 {
 		return ""
 	}
+	if t.FingerprintExpected == "" && len(prompts) > 1 {
+		onlyConfigured := make([]Prompt, 0, len(prompts)-1)
+		for _, p := range prompts {
+			if p.ID != FingerprintPromptID {
+				onlyConfigured = append(onlyConfigured, p)
+			}
+		}
+		if len(onlyConfigured) > 0 {
+			prompts = onlyConfigured
+		}
+	}
 	if (isolated || t.ConsecutiveFails > 0) && t.LastAutoPrompt != "" {
 		for _, p := range prompts {
 			if p.ID == t.LastAutoPrompt {

@@ -157,7 +157,7 @@ function renderRules(){
  $('rotatePrompts').checked=Boolean(policy.rotate||!policy.configured);
  const mode=policy.fingerprint_mode||'after_failures';
  $('fingerprintAutomatic').checked=mode!=='off';
- $('fingerprintMode').value=mode==='periodic_24h'?'periodic_24h':'after_failures';
+ $('fingerprintMode').value=['after_failures','periodic_24h','objective_rotation'].includes(mode)?mode:'after_failures';
  $('fingerprintMode').disabled=mode==='off';
  const list=$('customList');list.replaceChildren();
  for(const p of (s.custom_prompts||[])){
@@ -203,7 +203,7 @@ function updateFingerprintExpected(){
  $('fingerprintExpectation').hidden=$('manualPrompt').value!=='model-fingerprint';
  $('fingerprintModelHelp').textContent=fingerprintModelsError?
   '参考模型加载失败：'+fingerprintModelsError:
-  '参考库提供 '+fingerprintModels.length+' 个候选模型。修改预期模型后需先保存；默认使用当前 Codex 模型的内置映射。';
+  '参考库提供 '+fingerprintModels.length+' 个候选模型。手动及周期检测可自动匹配；作为自动客观题参与轮换时，必须先明确保存该账号的预期参考模型。';
 }
 async function loadFingerprintModels(){
  try{
@@ -318,6 +318,12 @@ $('saveAutoSyncAccountRoster').onclick=async()=>{
  }catch(e){notice('保存账号同步设置失败：'+(e?.message||String(e)),true)}
 };
 $('fingerprintAutomatic').onchange=()=>{$('fingerprintMode').disabled=!$('fingerprintAutomatic').checked};
+$('fingerprintMode').onchange=()=>{
+ if($('fingerprintMode').value==='objective_rotation'){
+   $('fingerprintAutomatic').checked=true;
+   $('rotatePrompts').checked=true;
+ }
+};
 $('manualPrompt').onchange=updateFingerprintExpected;
 $('manualTarget').onchange=updateFingerprintExpected;
 $('runManualTest').onclick=()=>{
@@ -334,9 +340,11 @@ $('saveFingerprintExpected').onclick=()=>action(async()=>{
 });
 $('saveAutoPrompts').onclick=()=>action(async()=>{
  const prompt_ids=[...document.querySelectorAll('#promptOptions input:checked')].map(x=>x.value);
- if(!prompt_ids.length)throw Error('至少选择一道客观题');
  const fingerprint_mode=$('fingerprintAutomatic').checked?$('fingerprintMode').value:'off';
+ if(!prompt_ids.length&&fingerprint_mode!=='objective_rotation')throw Error('至少选择一道客观题');
+ if(fingerprint_mode==='objective_rotation'&&prompt_ids.length&&!$('rotatePrompts').checked)throw Error('指纹参与客观题轮换时，请勾选按轮次顺序轮换');
  if(fingerprint_mode==='periodic_24h'&&!confirm('启用周期指纹检测后，每个正常监测目标每 24 小时会增加 3 次上游请求，确认继续？'))return;
+ if(fingerprint_mode==='objective_rotation'&&!confirm('指纹将作为自动检测题：每轮发送 3 次请求；连续三次可靠的指纹不一致可触发生产隔离。必须先为各监测账号设置参考模型，否则该轮只记不可用。确定启用？'))return;
  await api('/api/auto-prompts','POST',{prompt_ids,rotate:$('rotatePrompts').checked,fingerprint_mode});
 });
 $('saveCustom').onclick=()=>action(async()=>{

@@ -47,16 +47,16 @@
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
     <section id="rules" class="page" hidden>
-      <div class="section-head"><div><h1>检测题库</h1><p>客观题与模型指纹统一管理、独立判分。指纹结果不会累加客观题错误次数。</p></div></div>
+      <div class="section-head"><div><h1>检测题库</h1><p>手动与周期指纹仅记录结果；选择「作为客观题参与轮换」时，可靠的指纹偏离也可计入自动检测失败。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
-        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选客观题</label>
+        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题（含指纹轮换模式）</label>
         <div class="fingerprint-policy">
           <label class="check"><input type="checkbox" id="fingerprintAutomatic"> 模型指纹检测 · 参与自动检测</label>
           <label>指纹自动触发时机
-            <select id="fingerprintMode"><option value="after_failures">客观题连续 3 次错误后复核（推荐）</option><option value="periodic_24h">异常复核 + 正常账号每 24 小时周期检测</option></select>
+            <select id="fingerprintMode"><option value="after_failures">客观题连续 3 次错误后复核（推荐）</option><option value="periodic_24h">异常复核 + 正常账号每 24 小时周期检测</option><option value="objective_rotation">作为自动客观题参与轮换（按指纹结果判分）</option></select>
           </label>
-          <p class="hint">每轮指纹检测调用模型 3 次。关闭自动指纹时，连续 3 次客观题错误仍按低风险隔离复测；周期指纹只生成记录，不直接改变生产路由。</p>
+          <p class="hint">每轮指纹检测发送 3 次请求。新增「作为自动客观题参与轮换」为可选模式：一致=通过、强不一致=错误、采样不足/不可判=不可用；连续 3 次强不一致才可能触发隔离。请先在手动检测区域为每个监测目标保存预期指纹参考模型；没有预期模型时不发送自动指纹请求，也不累加失败。原有异常复核和 24 小时周期模式不变。</p>
         </div>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
       </div>

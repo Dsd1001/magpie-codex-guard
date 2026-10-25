@@ -13,12 +13,13 @@ type AutoPromptPolicy struct {
 	Configured      bool     `json:"configured"`
 	Rotate          bool     `json:"rotate"`
 	PromptIDs       []string `json:"prompt_ids"`
-	FingerprintMode string   `json:"fingerprint_mode"` // after_failures | periodic_24h | off
+	FingerprintMode string   `json:"fingerprint_mode"` // after_failures | periodic_24h | objective_rotation | off
 }
 
 const (
 	FingerprintOnFailure = "after_failures"
 	FingerprintPeriodic  = "periodic_24h"
+	FingerprintObjective = "objective_rotation"
 	FingerprintOff       = "off"
 )
 
@@ -81,6 +82,11 @@ func (s *Service) activeAccountPromptsLocked() []Prompt {
 			selected = append(selected, prompt)
 		}
 	}
+	if policy.FingerprintMode == FingerprintObjective {
+		if prompt, ok := FindPrompt(FingerprintPromptID); ok {
+			selected = append(selected, prompt)
+		}
+	}
 	return selected
 }
 
@@ -94,6 +100,11 @@ func (s *Service) resetAutoPromptStreaksLocked() map[string]AccountTarget {
 			continue
 		}
 		before[id] = *target
+		if _, held := s.state.Holds[target.Account]; held {
+			// Changing the question bank must never erase the state or
+			// next recheck time of an already quarantined account.
+			continue
+		}
 		target.ConsecutiveFails = 0
 		target.ConsecutivePasses = 0
 		target.LastAutoPrompt = ""
@@ -115,8 +126,8 @@ func (s *Service) ConfigureAutoPrompts(ids []string, rotate bool) error {
 	return s.ConfigureDetectionPrompts(ids, rotate, "")
 }
 
-// Fingerprint policy is independent from objective grading: it can never
-// enter selectAutomaticPrompt or alter consecutive objective failure counts.
+// The new objective_rotation mode is opt-in. Other fingerprint modes remain
+// independent of objective grading and preserve their prior schedules.
 func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerprintMode string) error {
 
 	s.mu.Lock()
@@ -128,12 +139,15 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 	if fingerprintMode == "" {
 		fingerprintMode = current.FingerprintMode
 	}
-	if fingerprintMode != FingerprintOnFailure && fingerprintMode != FingerprintPeriodic && fingerprintMode != FingerprintOff {
+	if fingerprintMode != FingerprintOnFailure && fingerprintMode != FingerprintPeriodic && fingerprintMode != FingerprintObjective && fingerprintMode != FingerprintOff {
 		return errors.New("无效的指纹检测触发模式")
 	}
 	available := s.eligibleAutoPromptsLocked()
-	if len(ids) == 0 {
+	if len(ids) == 0 && fingerprintMode != FingerprintObjective {
 		return errors.New("自动检测题库至少需要选择一道支持自动判分的题目")
+	}
+	if fingerprintMode == FingerprintObjective && len(ids) > 0 && !rotate {
+		return errors.New("指纹参与客观题轮换时，请开启按轮次轮换")
 	}
 	if len(ids) > len(available) {
 		return errors.New("自动检测题库包含重复或不可用的题目")
@@ -155,8 +169,10 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 	desired := AutoPromptPolicy{
 		Configured: true, Rotate: rotate, PromptIDs: slices.Clone(ids), FingerprintMode: fingerprintMode,
 	}
-	objectiveChanged := current.Rotate != desired.Rotate || !slices.Equal(current.PromptIDs, desired.PromptIDs)
 	fingerprintChanged := current.FingerprintMode != desired.FingerprintMode
+	objectiveChanged := current.Rotate != desired.Rotate ||
+		!slices.Equal(current.PromptIDs, desired.PromptIDs) ||
+		(fingerprintChanged && (current.FingerprintMode == FingerprintObjective || desired.FingerprintMode == FingerprintObjective))
 	if !objectiveChanged && !fingerprintChanged && s.state.AutoPromptPolicy.Configured {
 		return nil
 	}
@@ -209,7 +225,7 @@ func (s *Service) reconcileAutoPromptPolicyLocked() {
 			selected = append(selected, id)
 		}
 	}
-	if len(selected) == 0 {
+	if len(selected) == 0 && effectiveFingerprintMode(s.state.AutoPromptPolicy.FingerprintMode) != FingerprintObjective {
 		selected = []string{"milk"}
 	}
 	s.state.AutoPromptPolicy.PromptIDs = selected
