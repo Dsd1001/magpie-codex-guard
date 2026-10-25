@@ -4,7 +4,7 @@
 
 *An unofficial Magpie plugin for per-account Codex quality checks, local fingerprint verification, and safe Gateway Key quarantine.*
 
-Codex Guard 按 **Codex 登录账号** 而不是整个模型判断回答质量：通过独立检测 Gateway Key 定时提出客观题，异常时进行复测与模型指纹采样，并在明确授权后将风险账号从生产 Gateway Key 的白名单中排除。它**不会删除账号或修改 OAuth 凭证**，也不是新的模型供应商。
+Codex Guard 按 **Codex 登录账号** 检测：使用独立检测 Key 通过客观题与模型指纹采样自动检测降智，并自动将风险账号从生产 Gateway Key 的调用清单中排除。它**不会删除账号或修改 OAuth 凭证**，也不是新的模型供应商。
 
 **当前插件版本：** `0.1.0-alpha.15`（对应已校验的 Go 后端 `v0.1.0-alpha.14`）。目前仍属开发测试版本，请先验证检测准确性，再开启生产路由自动隔离。
 
