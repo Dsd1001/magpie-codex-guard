@@ -77,7 +77,8 @@ tests cover single, multiple, disabled and duplicate saved keys.
 ## Packaging
 
 Build and install a package containing the updated helper with
-`npm run build:release`. A source-only `github:` installation at alpha.21 pins the immutable,
-verified alpha.20 backend including unified quarantine and custom timings.
-The alpha.22 complete Release package includes the updated Go helper (source-only installation will be repinned after immutable release verification).
-Both installation paths retain SHA-256 integrity checks.
+`npm run build:release`. A source-only `github:` installation at alpha.23 pins the immutable,
+SHA-256-verified alpha.22 backend. It supports unavailable-check quarantine,
+the unified fingerprint/ordinary question bank, and custom timings.
+The alpha.23 complete Release package bundles the updated Go helper.
+Both installation paths retain archive and executable SHA-256 checks.

@@ -54,4 +54,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.22: automatic unavailable verdicts now quarantine immediately with configurable retries; fingerprint is an ordinary auto-question checkbox without separate modes; bundled backend preserves state and custom timings."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.23: GitHub source installer now pins immutable SHA-256-verified alpha.22 backend; unavailable automatic checks quarantine, fingerprint joins ordinary question list, customizable timings retained."

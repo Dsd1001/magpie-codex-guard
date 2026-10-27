@@ -6,7 +6,7 @@
 
 Codex Guard 通过独立检测 Key 对 **Codex 登录账号与显式登记的 API 上游** 执行自动客观题检测。普通题同题连续 3 次错误会隔离；指纹题一轮进行 3 次上游采样，只要可靠判定不一致就立即隔离。它**不会删除账号或修改 OAuth 凭证**，也不是新的模型供应商。
 
-**当前插件版本：** `0.1.0-alpha.22`。新版包含「自动检测不可用立即隔离」及指纹题与其他客观题并列配置。alpha.22 完整 Release 包含新后端；GitHub 源码安装器尚固定 alpha.20 后端，待 alpha.22 不可变资产发布并验证后更新固定校验。开启生产路由前请在观察模式验证。
+**当前插件版本：** `0.1.0-alpha.23`。GitHub 源码安装器现已固定并校验 `v0.1.0-alpha.22` 后端；alpha.23 完整 Release 包内含新后端。自动检测不可用立即隔离、指纹题与其他客观题并列配置、自定义时间均已支持。建议先在观察模式验证。
 
 ## 快速安装
 
@@ -156,7 +156,7 @@ Magpie 的 Gateway Key 账号白名单遵循 **“空列表允许全部账号”
 
 ## 直接在 Magpie 中安装（GitHub）
 
-**版本说明：** `v0.1.0-alpha.22` 完整包新增「自动检测不可用立即隔离」，自动题库中的「模型指纹检测」与其他题直接并列勾选。源码安装器须在 alpha.22 发布并核验后固定到新后端。在此之前源码安装仍使用已校验的 alpha.20 后端。升级保留已有隔离和自定义时间。
+**版本说明：** `v0.1.0-alpha.23` 将 GitHub 源码安装器更新到经过 SHA-256 核验的 `v0.1.0-alpha.22` Go 后端。GitHub 源码安装与完整 Release 安装均支持新版不可用隔离、统一题库和自定义检测时间。升级保留已有隔离和原有排程。
 
 在 **Magpie → 设置 → 插件** 页面底部的「已有想装的？」输入框中粘贴：
 
@@ -170,7 +170,7 @@ github:Dsd1001/magpie-codex-guard
 magpie plugin add github:Dsd1001/magpie-codex-guard
 ```
 
-**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件在首次启动时从 [v0.1.0-alpha.20 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.20) 下载所需的预编译程序，对安装包以及三个平台二进制分别校验固定 SHA-256，之后缓存在按后端版本隔离的数据目录中。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** 此处使用已发布并校验的 alpha.20 后端，是为了避免源码安装器依赖尚未发布的文件；alpha.21 Release 完整包则优先使用内部包含的本次 Go 后端。
+**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件在首次启动时从 [v0.1.0-alpha.22 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.22) 下载所需的预编译程序，对安装包以及三个平台二进制分别校验固定 SHA-256，之后缓存在按后端版本隔离的数据目录中。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** 此处使用已发布并校验的 alpha.22 后端，是为了避免源码安装器依赖尚未发布的文件；alpha.23 Release 完整包则优先使用内部包含的 Go 后端。
 
 **生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
 
