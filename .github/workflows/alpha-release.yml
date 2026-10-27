@@ -1,5 +1,5 @@
 name: Build Codex Guard Alpha Release
-# CI waits for asynchronous management UI actions before closing test pages.
+# CI waits for re-rendered question checkboxes before asserting saved selections.
 on:
   push:
     branches: [main]

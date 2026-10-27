@@ -212,7 +212,7 @@ test('fingerprint is a normal checkbox beside ordinary questions, without legacy
   assert.deepEqual(req,{prompt_ids:['model-fingerprint','milk'],rotate:true});
   assert.match(w.document.querySelector('#rules .hint').textContent,/3 次/);
   await waitFor(()=>w.document.querySelector('#notice').textContent==='操作已完成');
-  options[0].checked=false;
+  w.document.querySelector('#promptOptions input[value="model-fingerprint"]').checked=false;
   w.document.querySelector('#saveAutoPrompts').click();
   await waitFor(()=>state.state.auto_prompt_policy.prompt_ids.length===1);
   await new Promise(resolve=>setTimeout(resolve,85));
