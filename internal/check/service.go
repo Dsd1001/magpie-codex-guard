@@ -1,5 +1,5 @@
-// Package check provides account-scoped Codex probes and routing quarantine.
-// It does not gate models globally or execute untrusted model-generated code.
+// Package check provides fixed Codex/API-key probes and production-key quarantine.
+// It does not disable providers globally or execute untrusted model-generated code.
 package check
 
 import (
@@ -148,7 +148,7 @@ func New(dir, gate string) (*Service, error) {
 		if t.State == "checking" {
 			t.State = "unavailable"
 			t.Reason = "后台重启，中断的检测不计入错误"
-			t.NextCheckAt = time.Now().Add(time.Hour)
+			t.NextCheckAt = time.Now().Add(UnavailableInterval)
 		}
 	}
 	s.fingerprint = NewFingerprintRunner()

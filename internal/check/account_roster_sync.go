@@ -88,6 +88,9 @@ func (s *Service) SyncLiveAccountTargets() (AccountRosterSync, error) {
 	}
 	for _, a := range accounts {
 		for _, model := range modelIDs {
+			if !matchesAccountModel(a, model) {
+				continue
+			}
 			id := accountTargetID(a.ID, model)
 			if s.state.AccountTargets[id] != nil {
 				continue

@@ -16,13 +16,16 @@ type GatewayKeyScope struct {
 }
 
 type PlannedKeyScope struct {
-	KeyID     string   `json:"key_id"`
-	Before    []string `json:"before"`
-	After     []string `json:"after"`
-	Changed   bool     `json:"changed"`
-	IsProbe   bool     `json:"is_probe"`
-	OffBefore bool     `json:"off_before"`
-	OffAfter  bool     `json:"off_after"`
+	KeyID          string   `json:"key_id"`
+	Before         []string `json:"before"`
+	After          []string `json:"after"`
+	Changed        bool     `json:"changed"`
+	IsProbe        bool     `json:"is_probe"`
+	OffBefore      bool     `json:"off_before"`
+	OffAfter       bool     `json:"off_after"`
+	ModelsBefore   []string `json:"models_before,omitempty"`
+	ModelsAfter    []string `json:"models_after,omitempty"`
+	ModelsBaseline []string `json:"-"`
 }
 
 // PlanCodexQuarantine calculates explicit account allowlists across ALL

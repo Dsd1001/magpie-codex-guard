@@ -38,6 +38,9 @@ type RoutingState struct {
 	LastError          string              `json:"last_error,omitempty"`
 	LastApplied        time.Time           `json:"last_applied,omitempty"`
 	Audit              []RoutingAudit      `json:"audit,omitempty"`
+	ModelBaselines     map[string][]string `json:"model_baselines,omitempty"`
+	ModelExpected      map[string][]string `json:"model_expected,omitempty"`
+	ModelPrevious      map[string][]string `json:"model_previous,omitempty"`
 }
 
 type RoutingAudit struct {
@@ -64,6 +67,7 @@ type privateGatewayKey struct {
 	Name     string   `json:"name"`
 	Secret   string   `json:"secret"`
 	Accounts []string `json:"accounts"`
+	Models   []string `json:"models"`
 	Off      bool     `json:"off"`
 }
 
@@ -130,6 +134,9 @@ func loadKeyDocuments(path string) ([]map[string]json.RawMessage, []privateGatew
 func routingKnownIDs(codex []CodexAccount) []string {
 	ids := make([]string, 0, len(codex))
 	for _, a := range codex {
+		if accountProvider(a) != "codex" {
+			continue
+		}
 		ids = append(ids, a.ID)
 	}
 	return ids
@@ -189,8 +196,8 @@ func makeRoutingPreview(state State, keys []privateGatewayKey, codex []CodexAcco
 	if route.ProbeKeyID == "" {
 		return RoutingPreview{}, nil, nil, errors.New("未配置检测专用 Gateway Key ID")
 	}
-	if route.ExpectedCodexCount > 0 && len(codex) != route.ExpectedCodexCount {
-		return RoutingPreview{}, nil, nil, fmt.Errorf("Magpie 发现 %d 个 Codex 账号，与期望数量 %d 不一致；拒绝自动修改路由", len(codex), route.ExpectedCodexCount)
+	if route.ExpectedCodexCount > 0 && len(routingKnownIDs(codex)) != route.ExpectedCodexCount {
+		return RoutingPreview{}, nil, nil, fmt.Errorf("Magpie 发现 %d 个 Codex 账号，与期望数量 %d 不一致；拒绝自动修改路由", len(routingKnownIDs(codex)), route.ExpectedCodexCount)
 	}
 	baselines := make(map[string][]string, len(keys))
 	offBaselines := make(map[string]bool, len(keys))
@@ -231,6 +238,9 @@ func makeRoutingPreview(state State, keys []privateGatewayKey, codex []CodexAcco
 			for _, ref := range k.Accounts {
 				if strings.HasPrefix(strings.ToLower(ref), "codex/") {
 					for _, a := range codex {
+						if accountProvider(a) != "codex" {
+							continue
+						}
 						if !slices.ContainsFunc(k.Accounts, func(x string) bool { return strings.EqualFold(x, "codex/"+a.ID) }) {
 							return RoutingPreview{}, nil, nil, errors.New("检测 Key 不能访问所有 Codex 账号")
 						}
@@ -252,12 +262,26 @@ func makeRoutingPreview(state State, keys []privateGatewayKey, codex []CodexAcco
 	// so it continues to filter them out of historical baseline scopes.
 	// AccountCount remains the true live Magpie login count.
 	planKnown := routingKnownIDs(codex)
+	apiIDs := map[string]bool{}
+	for _, a := range codex {
+		if accountProvider(a) != "codex" {
+			apiIDs[a.ID] = true
+		}
+	}
+	codexExcluded := []string{}
 	for _, id := range excluded {
+		if hold, ok := state.Holds[id]; ok && modelProvider(hold.Model) != "" && modelProvider(hold.Model) != "codex" {
+			apiIDs[id] = true
+		}
+		if apiIDs[id] {
+			continue
+		}
+		codexExcluded = append(codexExcluded, id)
 		if !slices.Contains(planKnown, id) {
 			planKnown = append(planKnown, id)
 		}
 	}
-	plan, err := PlanCodexQuarantine(source, route.ProbeKeyID, planKnown, excluded)
+	plan, err := PlanCodexQuarantine(source, route.ProbeKeyID, planKnown, codexExcluded)
 	if err != nil {
 		return RoutingPreview{}, nil, nil, err
 	}
@@ -267,6 +291,9 @@ func makeRoutingPreview(state State, keys []privateGatewayKey, codex []CodexAcco
 		plan[i].Changed = !slices.Equal(keys[i].Accounts, plan[i].After) ||
 			keys[i].Off != plan[i].OffAfter
 		plan[i].OffBefore = keys[i].Off
+	}
+	if err := attachAPIModelScopes(state, keys, plan); err != nil {
+		return RoutingPreview{}, nil, nil, err
 	}
 	mode := "observe_only"
 	if route.AutoApply {
@@ -402,15 +429,19 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	}
 	after := map[string][]string{}
 	afterOff := map[string]bool{}
+	afterModels := map[string][]string{}
+	modelBaselines := map[string][]string{}
 	changed := false
 	for i, plan := range preview.Keys {
 		after[plan.KeyID] = slices.Clone(plan.After)
 		afterOff[plan.KeyID] = plan.OffAfter
+		afterModels[plan.KeyID] = slices.Clone(plan.ModelsAfter)
+		modelBaselines[plan.KeyID] = slices.Clone(plan.ModelsBaseline)
 		if !plan.Changed {
 			continue
 		}
 		changed = true
-		if len(plan.After) == 0 && len(preview.Quarantined) > 0 && !plan.OffAfter {
+		if len(plan.After) == 0 && len(preview.Quarantined) > 0 && !plan.OffAfter && len(heldAPIProviders(projected)) == 0 {
 			return RoutingPreview{}, errors.New("隔离后空白名单将误放行全部账号，拒绝写入")
 		}
 		data, err := json.Marshal(plan.After)
@@ -418,6 +449,11 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 			return RoutingPreview{}, err
 		}
 		rawKeys[i]["accounts"] = data
+		modelData, err := json.Marshal(plan.ModelsAfter)
+		if err != nil {
+			return RoutingPreview{}, err
+		}
+		rawKeys[i]["models"] = modelData
 		if plan.OffAfter {
 			rawKeys[i]["off"] = json.RawMessage("true")
 		} else {
@@ -430,6 +466,9 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		previous := s.state.Route
 		different := !maps.EqualFunc(previous.Baselines, baselines, slices.Equal) ||
 			!maps.EqualFunc(previous.Expected, after, slices.Equal)
+		if !maps.EqualFunc(previous.ModelBaselines, modelBaselines, slices.Equal) || !maps.EqualFunc(previous.ModelExpected, afterModels, slices.Equal) {
+			different = true
+		}
 		if !maps.Equal(previous.BaselineOff, offBaselines) || !maps.Equal(previous.ExpectedOff, afterOff) {
 			different = true
 		}
@@ -447,6 +486,8 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		}
 		s.state.Route.Baselines = baselines
 		s.state.Route.Expected = after
+		s.state.Route.ModelBaselines = modelBaselines
+		s.state.Route.ModelExpected = afterModels
 		s.state.Route.BaselineOff = offBaselines
 		s.state.Route.ExpectedOff = afterOff
 		s.state.Route.Quarantined = quarantineSet(preview.Quarantined)
@@ -469,13 +510,17 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	route.PendingRestore = restore
 	route.Previous = make(map[string][]string, len(keys))
 	route.PreviousOff = make(map[string]bool, len(keys))
+	route.ModelPrevious = make(map[string][]string, len(keys))
 	for _, k := range keys {
 		route.Previous[k.ID] = slices.Clone(k.Accounts)
 		route.PreviousOff[k.ID] = k.Off
+		route.ModelPrevious[k.ID] = slices.Clone(k.Models)
 	}
 	route.PendingQuarantine = slices.Clone(preview.Quarantined)
 	route.Baselines = baselines
 	route.Expected = after
+	route.ModelBaselines = modelBaselines
+	route.ModelExpected = afterModels
 	route.BaselineOff = offBaselines
 	route.ExpectedOff = afterOff
 	if err := s.store.Save(s.state); err != nil {
@@ -500,7 +545,7 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 			err = errors.New("Gateway Key 写后数量改变")
 		}
 		for i, k := range actual {
-			if err == nil && (k.ID != keys[i].ID || !slices.Equal(k.Accounts, after[k.ID]) || k.Off != afterOff[k.ID]) {
+			if err == nil && (k.ID != keys[i].ID || !slices.Equal(k.Accounts, after[k.ID]) || k.Off != afterOff[k.ID] || !slices.Equal(k.Models, afterModels[k.ID])) {
 				err = errors.New("Gateway Key 写后验证失败")
 			}
 		}
@@ -514,6 +559,7 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	route.PendingRestore = false
 	route.Previous = nil
 	route.PreviousOff = nil
+	route.ModelPrevious = nil
 	route.PendingQuarantine = nil
 	route.Quarantined = quarantineSet(preview.Quarantined)
 	if restore {
@@ -596,6 +642,12 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 		if !existsAfter || !slices.Equal(k.Accounts, after) || k.Off != route.ExpectedOff[k.ID] {
 			afterOK = false
 		}
+		if models, ok := route.ModelPrevious[k.ID]; ok && !slices.Equal(k.Models, models) {
+			beforeOK = false
+		}
+		if models, ok := route.ModelExpected[k.ID]; ok && !slices.Equal(k.Models, models) {
+			afterOK = false
+		}
 	}
 	if !beforeOK && !afterOK {
 		return "", errors.New("路由状态混合或被外部更改，拒绝自动恢复；需要管理员人工核对")
@@ -614,6 +666,7 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 	} else {
 		route.Expected = route.Previous
 		route.ExpectedOff = route.PreviousOff
+		route.ModelExpected = route.ModelPrevious
 		route.AutoApply = false
 		route.LastError = "上次写入未执行；已关闭自动隔离，需人工核对后重新开启"
 		action = "aborted"
@@ -622,6 +675,7 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 	route.PendingRestore = false
 	route.Previous = nil
 	route.PreviousOff = nil
+	route.ModelPrevious = nil
 	route.PendingQuarantine = nil
 	route.Audit = append(route.Audit, RoutingAudit{At: time.Now(), Action: "recover-" + action, KeyCount: len(keys), Quarantined: sortedQuarantined(route.Quarantined)})
 	if len(route.Audit) > 100 {

@@ -6,12 +6,12 @@ import (
 )
 
 const (
-	NormalInterval        = time.Hour
+	NormalInterval        = 30 * time.Minute
 	SuspectInterval       = 2 * time.Minute
 	HighRiskInterval      = 48 * time.Hour
 	LowRiskFirstInterval  = 6 * time.Hour
 	LowRiskRepeatInterval = 24 * time.Hour
-	UnavailableInterval   = time.Hour
+	UnavailableInterval   = 30 * time.Minute
 )
 const (
 	PhaseHealthy     = "passed"

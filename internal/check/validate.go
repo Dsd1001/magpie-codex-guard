@@ -17,7 +17,7 @@ func ValidateAccount(account string) error {
 	return nil
 }
 func validateAccountModel(model string) error {
-	if model == "" || len(model) > 512 || !strings.HasPrefix(model, "codex/") || model == "codex/" || strings.HasPrefix(model, "quality-probe/") {
+	if model == "" || len(model) > 512 || !apiModelPattern.MatchString(model) || strings.HasPrefix(model, "quality-probe/") {
 		return errors.New("请选择完整模型 ID")
 	}
 	for _, r := range model {

@@ -67,6 +67,9 @@ func verifyHeldAccountsExcluded(state State, keys []privateGatewayKey, codex []C
 	}
 	held := map[string]bool{}
 	for _, id := range excluded {
+		if hold, ok := state.Holds[id]; ok && modelProvider(hold.Model) != "" && modelProvider(hold.Model) != "codex" {
+			continue
+		}
 		held[strings.ToLower(id)] = true
 	}
 	probeSeen := false
@@ -78,7 +81,21 @@ func verifyHeldAccountsExcluded(state State, keys []privateGatewayKey, codex []C
 			}
 			continue
 		}
-		if k.Off || len(held) == 0 {
+		if k.Off {
+			continue
+		}
+		for provider := range heldAPIProviders(state) {
+			if len(k.Models) == 0 {
+				return errors.New("API 隔离上游仍对生产 Key 开放")
+			}
+			for _, pattern := range k.Models {
+				p, m, ok := strings.Cut(pattern, "/")
+				if !ok || !providerIDPattern.MatchString(p) || p == "group" || p == provider || m == "" {
+					return errors.New("API 隔离模型白名单无法证明已阻止生产访问")
+				}
+			}
+		}
+		if len(held) == 0 {
 			continue
 		}
 		codexScoped := false
@@ -267,7 +284,7 @@ func (s *Service) ApproveCurrentScopes(ctx context.Context, confirm string) (Rou
 	if err != nil {
 		return RoutingPreview{}, err
 	}
-	if route.ExpectedCodexCount > 0 && len(codex) != route.ExpectedCodexCount {
+	if route.ExpectedCodexCount > 0 && len(routingKnownIDs(codex)) != route.ExpectedCodexCount {
 		return RoutingPreview{}, errors.New("实际账号数量与预期不一致，请先检查账号列表")
 	}
 	if err = verifyProbeKey(s.state, keys); err != nil {

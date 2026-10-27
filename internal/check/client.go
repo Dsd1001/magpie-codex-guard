@@ -70,8 +70,8 @@ func Models(ctx context.Context, c Config) ([]Model, error) {
 	}
 	out := []Model{}
 	for _, m := range data.Data {
-		if strings.HasPrefix(m.ID, "codex/") {
-			out = append(out, Model{ID: m.ID, Group: "codex"})
+		if strings.HasPrefix(m.ID, "codex/") || isEnrolledAPIModel(m.ID) {
+			out = append(out, Model{ID: m.ID, Group: modelProvider(m.ID)})
 		}
 	}
 	return out, nil

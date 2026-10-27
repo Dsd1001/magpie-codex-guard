@@ -85,7 +85,11 @@ func magpieModelsFromCLI(ctx context.Context, executable string) ([]Model, error
 func AvailableCodexModels(ctx context.Context, c Config) ([]Model, error) {
 	local, localErr := magpieModelsFromCLI(ctx, "magpie")
 	if localErr == nil {
+		local = append(local, enrolledAPIModels()...)
 		return local, nil
+	}
+	if api := enrolledAPIModels(); len(api) > 0 {
+		return api, nil
 	}
 	if c.GatewayURL != "" && c.GatewayKey != "" {
 		remote, err := Models(ctx, c)
