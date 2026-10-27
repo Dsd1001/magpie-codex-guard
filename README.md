@@ -6,7 +6,7 @@
 
 Codex Guard 通过独立检测 Key 对 **Codex 登录账号与显式登记的 API 上游** 执行自动客观题检测。普通题同题连续 3 次错误会隔离；指纹题一轮进行 3 次上游采样，只要可靠判定不一致就立即隔离。它**不会删除账号或修改 OAuth 凭证**，也不是新的模型供应商。
 
-**当前插件版本：** `0.1.0-alpha.20`。此 Release 完整包内含本次新 Go 后端；GitHub 源码安装器仍暂时固定校验 alpha.18 后端，新安装器将于此 Release 生成并核验后再更新。当前仍属开发测试版本，建议先验证检测准确性，再开启生产路由自动隔离。
+**当前插件版本：** `0.1.0-alpha.21`。GitHub 源码安装器现已固定校验并使用 `v0.1.0-alpha.20` Go 后端；alpha.21 完整 Release 包内含新版本后端。当前仍属开发测试版本，建议先在观察模式验证检测准确性，再开启生产路由自动隔离。
 
 ## 快速安装
 
@@ -156,7 +156,7 @@ Magpie 的 Gateway Key 账号白名单遵循 **“空列表允许全部账号”
 
 ## 直接在 Magpie 中安装（GitHub）
 
-**版本说明：** `v0.1.0-alpha.20` 是统一隔离和自定义检测时间的首个完整安装包。GitHub 源码安装暂时仍固定旧版后端，因此新功能应使用 Release 完整包；待 alpha.20 资产完成不可变发布并核验后，再同步源码安装器到对应的正式 SHA-256 固定值。升级不会自动解除旧隔离，原有排程默认保留。
+**版本说明：** `v0.1.0-alpha.21` 修复源码安装器后端滞后：使用已发布、SHA-256 校验通过的 `v0.1.0-alpha.20` 后端。源码安装和 alpha.21 完整 Release 包都支持指纹题一次有效不一致隔离、普通题连续三次错误隔离及自定义检测时间。升级不会自动解除旧隔离，原有排程默认保留。
 
 在 **Magpie → 设置 → 插件** 页面底部的「已有想装的？」输入框中粘贴：
 
@@ -170,7 +170,7 @@ github:Dsd1001/magpie-codex-guard
 magpie plugin add github:Dsd1001/magpie-codex-guard
 ```
 
-**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件在首次启动时从 [v0.1.0-alpha.18 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.18) 下载所需的预编译程序，对安装包以及三个平台二进制分别校验固定 SHA-256，之后缓存在按后端版本隔离的数据目录中。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** 此处使用已发布并校验的 alpha.18 后端，是为了避免源码安装器依赖尚未发布的文件；alpha.20 Release 完整包则使用内部包含的本次 Go 后端。
+**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件在首次启动时从 [v0.1.0-alpha.20 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.20) 下载所需的预编译程序，对安装包以及三个平台二进制分别校验固定 SHA-256，之后缓存在按后端版本隔离的数据目录中。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** 此处使用已发布并校验的 alpha.20 后端，是为了避免源码安装器依赖尚未发布的文件；alpha.21 Release 完整包则优先使用内部包含的本次 Go 后端。
 
 **生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
 
