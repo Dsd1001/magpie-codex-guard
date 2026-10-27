@@ -137,13 +137,13 @@ flowchart TD
 
 ## 安装包与版本
 
-当前开发版：**`v0.1.0-alpha.24`**（新增：全新安装默认指纹检测；完整包内含对应 Go 后端）。
+当前开发版：**`v0.1.0-alpha.25`**（新安装默认使用模型指纹判断降智，GitHub 直接安装和完整 Release 安装均使用新版后端）。
 
 [GitHub Releases](https://github.com/Dsd1001/magpie-codex-guard/releases) · [详细架构](docs/architecture.md)
 
 Magpie 使用 `github:Dsd1001/magpie-codex-guard` 源码安装时，插件会从已发布的 Release 获取所需 Go 二进制，使用**固定 SHA-256** 校验安装包及可执行文件；完整 Release 包则优先使用内置二进制。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，首次下载安装需要访问 GitHub Release 并具备 `tar`。
 
-**发布顺序提示：** alpha.24 完整包包含最新“新安装默认指纹”的逻辑；当前源码安装器仍固定 alpha.22 后端，需待 alpha.24 Release 不可变资产完成发布与校验后更新安装器固定版本。
+**安装器版本说明：** 从 Magpie 通过 GitHub 源码安装时，安装器固定下载并校验已发布的 `v0.1.0-alpha.24` Go 后端；alpha.25 完整 Release 包内含本版 Go 后端。因此两种安装方式都支持“新安装默认指纹判断降智”，且升级既有数据库不会重置原选题。
 
 远程管理可使用插件提供的临时 Cloudflare Quick Tunnel，生成一次性 HTTPS 管理链接；无需自行配置 Cloudflare DNS。管理链接应视同管理员凭证，不要公开分享。
 
@@ -155,3 +155,5 @@ Magpie 使用 `github:Dsd1001/magpie-codex-guard` 源码安装时，插件会从
 - 插件仅针对模型质量监测和受管理的路由隔离，不提供模型供应或订阅账号授权服务。
 
 **建议上线顺序：先校验参考映射 → 手动指纹检测 → 开定时检测（观察）→ 核验历史和隔离预览 → 最后手动启用生产自动隔离。**
+
+许可证与授权详情请参阅 [LICENSE](LICENSE)。

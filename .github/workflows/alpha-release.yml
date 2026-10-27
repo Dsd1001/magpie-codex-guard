@@ -54,4 +54,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.24: brand-new installs default to fingerprint-based intelligence downgrade detection without auto-enabling production routing; legacy question choices are preserved. README rewritten for current behavior."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.25: source-only Magpie GitHub installs now pin the immutable SHA-256-verified alpha.24 fingerprint-default backend; rewritten README and legacy policy safeguards included."
