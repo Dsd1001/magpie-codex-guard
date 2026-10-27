@@ -1,5 +1,5 @@
 name: Build Codex Guard Alpha Release
-# CI also checks per-target timing settings with a deterministic enrolled-target fixture.
+# CI verifies deterministic per-target timing settings and select options.
 on:
   push:
     branches: [main]

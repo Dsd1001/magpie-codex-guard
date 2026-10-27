@@ -344,7 +344,7 @@ test('time policy edits persist global defaults and per-target overrides without
    account:'aaa',model:'codex/gpt-6.1-sol',enabled:true,state:'passed'
   };
   w.document.querySelector('#refresh').click();
-  await waitFor(()=>w.document.querySelector('#timingScope option').length>1);
+  await waitFor(()=>w.document.querySelector('#timingScope').options.length>1);
   w.document.querySelector('#timingScope').value='aaa\x1fcodex/gpt-6.1-sol';
   w.document.querySelector('#timingScope').dispatchEvent(new w.Event('change'));
   assert.equal(w.document.querySelector('#timingInherit').checked,true);
