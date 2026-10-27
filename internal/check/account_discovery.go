@@ -15,8 +15,10 @@ import (
 // CodexAccount is public account metadata only. Login credentials
 // contained in Magpie's logins.json are never persisted or returned.
 type CodexAccount struct {
-	ID   string `json:"id"`
-	User string `json:"user"`
+	ID       string `json:"id"`
+	User     string `json:"user"`
+	Provider string `json:"provider,omitempty"`
+	Pin      string `json:"-"`
 }
 
 // MagpieDir mirrors Magpie's non-portable ~/.config/magpie directory.
@@ -48,8 +50,11 @@ func DiscoverCodexAccounts(dir string) ([]CodexAccount, error) {
 		return nil, errors.New("Magpie 配置目录不是绝对路径")
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "logins.json"))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("无法读取本机 Magpie 账号信息：%w", err)
+	}
+	if os.IsNotExist(err) {
+		raw = []byte("[]")
 	}
 	if len(raw) > 8*1024*1024 {
 		return nil, errors.New("Magpie 账号信息超出安全上限")
@@ -86,8 +91,13 @@ func DiscoverCodexAccounts(dir string) ([]CodexAccount, error) {
 		ids[strings.ToLower(id)] = true
 		out = append(out, CodexAccount{ID: id, User: a.User})
 	}
+	apiAccounts, err := discoverAPIAccounts(dir)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, apiAccounts...)
 	if len(out) == 0 {
-		return nil, errors.New("本机 Magpie 的 logins.json 没有可识别的 Codex 账号；拒绝推测可用账号")
+		return nil, errors.New("本机 Magpie 没有可识别的 Codex 账号或已登记 API 上游；拒绝推测可用账号")
 	}
 	slices.SortFunc(out, func(a, b CodexAccount) int {
 		return strings.Compare(strings.ToLower(a.User), strings.ToLower(b.User))
@@ -126,6 +136,9 @@ func ResolveProbeLoginUser(ref string) (string, error) {
 	}
 	for _, a := range accounts {
 		if strings.EqualFold(ref, a.ID) || strings.EqualFold(ref, a.User) {
+			if a.Pin != "" {
+				return a.Pin, nil
+			}
 			return a.User, nil
 		}
 	}

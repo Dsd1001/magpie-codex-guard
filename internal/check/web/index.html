@@ -29,9 +29,9 @@
     </nav>
     <div id="notice" class="notice" role="status" hidden></div>
     <section id="accounts" class="page">
-      <div class="section-head"><div><h1>Codex 账号</h1><p>自动检测以账号为单位；隔离账号从生产 Gateway Key 的路由池排除。</p></div></div>
+      <div class="section-head"><div><h1>账号与 API 上游</h1><p>自动检测固定账号或 API Key；隔离目标从生产 Gateway Key 的可用范围排除。</p></div></div>
       <div class="toolbar">
-        <label>检测账号<select id="accountSelect"><option value="">选择账号邮箱</option></select></label>
+        <label>检测账号<select id="accountSelect"><option value="">选择账号或 API 上游</option></select></label>
         <label>检测模型<select id="modelSelect"><option value="">选择模型</option></select></label>
         <button id="addAccount" class="primary">添加监测</button>
         <button id="addAll" class="subtle">添加全部账号</button>
@@ -42,7 +42,7 @@
         <button id="saveAutoSyncAccountRoster" class="subtle">保存同步设置</button>
       </div>
       <p class="hint">同步只修改检测目标，不影响 Gateway Key 白名单。已删除账号会显示为隔离留档并停止检测；旧隔离记录会保留。新增账号从已有监测模型继承检测设置，自动同步需要手动开启。</p>
-      <p id="modelHelp" class="hint model-help" role="status">正在从 Magpie 本机读取 Codex 模型…</p>
+      <p id="modelHelp" class="hint model-help" role="status">正在读取 Codex 与已登记 API 上游的模型…</p>
       <div class="card table-scroll"><table><thead><tr><th>账号</th><th>模型</th><th>状态</th><th>下次检测</th><th>操作</th></tr></thead><tbody id="accountRows"><tr><td colspan="5" class="empty">正在读取账号信息…</td></tr></tbody></table></div>
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
@@ -114,7 +114,7 @@
           <p class="hint">默认观察模式。隔离后检测 Key 保持允许，生产 Key 被限制。所有账号均异常时可能触发安全拒绝；不可将空白名单写作全量隔离。</p>
         </div>
       </div>
-      <div class="card small-card"><h2>固定策略</h2><p>正常账号每 1 小时检测客观题，首次错误后 2 分钟复测。连续 3 次错误进入隔离流程；默认执行 3 轮指纹复核，关闭自动指纹则保守判为低风险。指纹明显异常时每 48 小时复测客观题；指纹正常或不可判时首次 6 小时，之后每 24 小时复测。连续两次客观题正确、间隔 2 分钟，解除隔离。单独手动与周期指纹结果不改变路由。</p></div>
+      <div class="card small-card"><h2>固定策略</h2><p>正常账号每 30 分钟检测客观题，请求不可用时 30 分钟后重试，首次错误后 2 分钟复测。连续 3 次错误进入隔离流程；默认执行 3 轮指纹复核，关闭自动指纹则保守判为低风险。指纹明显异常时每 48 小时复测客观题；指纹正常或不可判时首次 6 小时，之后每 24 小时复测。连续两次客观题正确、间隔 2 分钟，解除隔离。单独手动与周期指纹结果不改变路由。</p></div>
     </section>
   </main>
   <footer>Codex Guard · 独立插件开发版 · 仅管理通过所配置 Gateway Key 的业务流量</footer>

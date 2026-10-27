@@ -9,12 +9,12 @@ func TestObjectiveSuspectToFingerprint(t *testing.T) {
 	start := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol", Enabled: true}
 	for i := 1; i <= 3; i++ {
-		now := start.Add(time.Duration(i-1) * 2 * time.Minute)
+		now := start.Add(time.Duration(i-1) * SuspectInterval)
 		yes, _ := objectiveTransition(target, nil, "failed", "milk", now)
 		if (i == 3) != yes {
 			t.Fatalf("at %d expected fingerprint? %v", i, yes)
 		}
-		if i < 3 && !target.NextCheckAt.Equal(now.Add(2*time.Minute)) {
+		if i < 3 && !target.NextCheckAt.Equal(now.Add(SuspectInterval)) {
 			t.Fatal("suspect time incorrect")
 		}
 	}
@@ -53,7 +53,7 @@ func TestRecoveryRequiresTwoAndNotAffectedByUnavailable(t *testing.T) {
 	hold := startHold(*tgt, start)
 	classifyHold(&hold, FingerprintReport{Verdict: "mismatch"}, start)
 	_, release := objectiveTransition(tgt, &hold, "passed", "milk", start.Add(48*time.Hour))
-	if release || hold.ConfirmationPasses != 1 || !tgt.NextCheckAt.Equal(start.Add(48*time.Hour+2*time.Minute)) {
+	if release || hold.ConfirmationPasses != 1 || !tgt.NextCheckAt.Equal(start.Add(48*time.Hour+SuspectInterval)) {
 		t.Fatal("not in confirmation phase")
 	}
 	_, release = objectiveTransition(tgt, &hold, "unavailable", "milk", tgt.NextCheckAt)

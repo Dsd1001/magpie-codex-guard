@@ -97,8 +97,8 @@ func TestFingerprintObjectiveMatchIsSinglePassedCheckWithThreeSamples(t *testing
 	if target.State != PhaseHealthy || target.LastAutoPrompt != FingerprintPromptID || target.ConsecutiveFails != 0 || target.PromptRotation != 2 {
 		t.Fatalf("fingerprint was not processed as a passed question: %+v", target)
 	}
-	if time.Until(target.NextCheckAt) < 59*time.Minute {
-		t.Fatal("normal next check not hourly")
+	if target.NextCheckAt.Sub(target.CheckedAt) != 30*time.Minute {
+		t.Fatal("normal next check is not 30 minutes after the completed check")
 	}
 	if len(s.state.Holds) != 0 {
 		t.Fatal("passing fingerprint created a quarantine")

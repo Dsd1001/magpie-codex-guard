@@ -6,7 +6,7 @@ import {JSDOM} from 'jsdom';
 const html=await readFile(new URL('../internal/check/web/index.html',import.meta.url),'utf8');
 const js=await readFile(new URL('../internal/check/web/assets/app.js',import.meta.url),'utf8');
 
-function fixture({modelsError=''}={}){
+function fixture({modelsError='',apiUpstream=false}={}){
  const calls=[];
  const state={
   state:{
@@ -27,6 +27,7 @@ function fixture({modelsError=''}={}){
   keys:[{id:'probe',name:'Detection'}, {id:'prod',name:'Business'}],
   prompts:[{id:'model-fingerprint',kind:'fingerprint',name:'模型指纹检测',automatic:false},{id:'milk',name:'牛奶推理',kind:'objective',automatic:true}],
  };
+ if(apiUpstream)state.accounts.push({id:'api-test',user:'Example · API',provider:'example'});
  const dom=new JSDOM(html,{url:'http://127.0.0.1:3344/',runScripts:'outside-only'});
  const w=dom.window;
  w.HTMLElement.prototype.scrollIntoView=()=>{};
@@ -40,6 +41,7 @@ function fixture({modelsError=''}={}){
   else if(path==='/api/models'){
    if(modelsError)return {ok:false,status:503,text:async()=>modelsError};
    payload=[{id:'codex/gpt-6.1-sol',group:'codex'}];
+   if(apiUpstream)payload.push({id:'example/gpt-6.1-sol',group:'example'});
   }
   else if(path==='/api/fingerprint-models')payload=[{id:'gpt-6-astra',name:'gpt-6-astra/6.1-sol'},{id:'gpt-6-sol',name:'gpt-6-sol'}];
   else if(path==='/api/fingerprint-expected'&&method==='POST'){
@@ -96,7 +98,7 @@ test('dashboard renders safely and triggers account-scoped APIs',async()=>{
  try{
   await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
   assert.equal(w.document.querySelector('#statAccounts').textContent,'0');
-  assert.match(w.document.querySelector('#modelHelp').textContent,/已读取 Magpie 的 1 个 Codex 模型/);
+  assert.match(w.document.querySelector('#modelHelp').textContent,/已读取 Magpie 的 1 个检测模型/);
   assert.match(w.document.querySelector('#modelHelp').textContent,/独立检测 Gateway Key/);
   assert.equal(w.document.querySelector('#addAccount').disabled,false);
   const selects=w.document.querySelector('#accountSelect');
@@ -131,6 +133,21 @@ test('route preview reports disabled keys and never serializes raw secrets',asyn
   assert.doesNotMatch(w.document.querySelector('#routePreview').textContent,/SECRET/);
   assert.match(w.document.querySelector('#routePreview').textContent,/暂时停用/);
   await new Promise(resolve=>setTimeout(resolve,65));
+ }finally{dom.window.close()}
+});
+
+test('API upstream enrollment uses the selected provider model and stable identity',async()=>{
+ const {dom,w,calls}=fixture({apiUpstream:true});
+ try{
+  await waitFor(()=>w.document.querySelector('#modelSelect option[value="example/gpt-6.1-sol"]'));
+  assert.equal(w.document.querySelector('#accountSelect option[value="api-test"]').textContent,'Example · API');
+  w.document.querySelector('#accountSelect').value='api-test';
+  w.document.querySelector('#modelSelect').value='example/gpt-6.1-sol';
+  w.document.querySelector('#addAccount').click();
+  await waitFor(()=>w.document.querySelector('#accountRows').textContent.includes('Example · API'));
+  const request=calls.find(c=>c.path==='/api/account-target'&&c.options.method==='POST');
+  assert.deepEqual(JSON.parse(request.options.body),{account:'api-test',model:'example/gpt-6.1-sol',enabled:true});
+  assert.match(w.document.querySelector('#accountRows').textContent,/example\/gpt-6\.1-sol/);
  }finally{dom.window.close()}
 });
 

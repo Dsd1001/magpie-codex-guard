@@ -30,6 +30,11 @@ func (s *Service) SetAccountTarget(account, model string, enabled bool) error {
 	if err != nil {
 		return err
 	}
+	for _, a := range known {
+		if a.ID == stable && !matchesAccountModel(a, model) {
+			return errors.New("检测模型不属于指定账号的供应商")
+		}
+	}
 	id := accountTargetID(stable, model)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,6 +97,9 @@ func (s *Service) DiscoverAccountTargets(model string) (int, error) {
 	}
 	created := []string{}
 	for _, a := range accounts {
+		if !matchesAccountModel(a, model) {
+			continue
+		}
 		id := accountTargetID(a.ID, model)
 		if s.state.AccountTargets[id] == nil {
 			target := &AccountTarget{Account: a.ID, Model: model, State: "unverified", Enabled: true}
