@@ -91,6 +91,16 @@ flowchart TD
 
 **没有单独的“指纹复核”或“高、中、低风险”阶段。** 指纹题与普通客观题在同一题库并列，只有各自的错误隔离阈值不同。手动指纹检测只写入历史记录，不改变隔离状态。
 
+## 指纹库版本与更新
+
+当前内置指纹参考库来自 [Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector)，固定在上游 **2026-10-27** 的 [`a4ef212d`](https://github.com/Ikaleio/lm-detector/commit/a4ef212df06817e8071acd05f00219f4c9eb2f9a) 提交；参考库构建时间为 `2026-10-27 05:02:50 UTC`，支持 **64 个模型**（上一版为 60 个）。
+
+新增模型：`gpt-6.1-terra`、`kimi-k3.1-pro`、`gemini-3.5-flash-lite`、`minimax-m3.1-flash`。评分器也已同步上游 10 月 24 日修正的数字序列判别规则：只有**两个序列信号都不符合模型输出特征**时才拒绝判分，避免把部分正常回答过早判成“不可判定”。
+
+更新同时重算了 16 组独立上游 JavaScript 评分结果，Go 实现会持续对比其模型预测、排序和概率。内置库**不依赖在线更新**；升级插件到包含新 Go 后端的版本才会更新参考库。完整数据来源、哈希和可复现同步脚本见 [指纹库来源与校验](internal/fingerprint/data/ORIGIN.md)。
+
+**注意：** 参考库更新后，旧模型的相对概率也可能变化；而自动检测不可用会触发隔离。升级后请先在观察模式校验模型映射及检测结果，确认无异常再开启生产路由自动隔离。
+
 ## 隔离与恢复规则
 
 | 自动检测结果 | 处理方式 |
@@ -137,13 +147,13 @@ flowchart TD
 
 ## 安装包与版本
 
-当前开发版：**`v0.1.0-alpha.25`**（新安装默认使用模型指纹判断降智，GitHub 直接安装和完整 Release 安装均使用新版后端）。
+当前开发版：**`v0.1.0-alpha.26`**（内置指纹库更新至 2026-10-27，支持 64 个模型；同步上游评分器）。完整 Release 包包含新版后端；GitHub 源码安装器需在发布并核验此版本后再更新固定校验。
 
 [GitHub Releases](https://github.com/Dsd1001/magpie-codex-guard/releases) · [详细架构](docs/architecture.md)
 
 Magpie 使用 `github:Dsd1001/magpie-codex-guard` 源码安装时，插件会从已发布的 Release 获取所需 Go 二进制，使用**固定 SHA-256** 校验安装包及可执行文件；完整 Release 包则优先使用内置二进制。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，首次下载安装需要访问 GitHub Release 并具备 `tar`。
 
-**安装器版本说明：** 从 Magpie 通过 GitHub 源码安装时，安装器固定下载并校验已发布的 `v0.1.0-alpha.24` Go 后端；alpha.25 完整 Release 包内含本版 Go 后端。因此两种安装方式都支持“新安装默认指纹判断降智”，且升级既有数据库不会重置原选题。
+**安装器版本说明：** 本次 alpha.26 完整 Release 将内置新版 Go 后端与 64 模型指纹库；直接从 GitHub 源码安装的运行时仍暂时固定到经过验证的 alpha.24 后端。为了保持 SHA-256 固定校验，只有在 alpha.26 资产正式发布且完整性验证通过后，才会更新源码安装器到新版后端。升级不会重置旧检测题库或隔离状态。
 
 远程管理可使用插件提供的临时 Cloudflare Quick Tunnel，生成一次性 HTTPS 管理链接；无需自行配置 Cloudflare DNS。管理链接应视同管理员凭证，不要公开分享。
 

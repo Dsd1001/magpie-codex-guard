@@ -40,6 +40,15 @@
 
 恢复检测始终使用导致隔离的原题，连续两次有效正确才放行。隔离期间遇到无法判定不会放行，并且会清零此前尚未完成的恢复通过次数；恢复必须连续两次有效正确。普通业务与后台采样均由 Magpie 的专用 Key 固定目标，绝不通过其他账号回退。
 
+## 指纹参考库与评分器同步
+
+- 上游 `Ikaleio/lm-detector` 固定到提交 [`a4ef212d`](https://github.com/Ikaleio/lm-detector/commit/a4ef212df06817e8071acd05f00219f4c9eb2f9a)，构建于 2026-10-27 05:02:50 UTC，模型数从 **60 增至 64**。
+- 新增 `gpt-6.1-terra`、`kimi-k3.1-pro`、`gemini-3.5-flash-lite`、`minimax-m3.1-flash`；保留现有 `codex/gpt-6.1-sol` → `gpt-6-astra` 映射。
+- Go 评分器同步了上游 2026-10-24 变更（[`ef6badb7`](https://github.com/Ikaleio/lm-detector/commit/ef6badb71016)）：数字序列只要满足**负自相关或较少短距离步长中的一个条件**就继续评分，而不是强制两个条件同时满足。
+- 固定指纹库的 SHA-256、构建时间、参考 ID 顺序、模型数量和响应数，禁止无校验的静默更新；详情见 [`internal/fingerprint/data/ORIGIN.md`](../internal/fingerprint/data/ORIGIN.md)。
+- 原有的 16 组上游原始 JavaScript 对照样例使用最新参考库重算；Go 本地评分与原始结果保持数值对齐（得分和概率允许误差 1e-6）。
+- 若参考库更新，已被隔离的账号不会自动解除；历史检测记录仍保留原指纹版本，只有之后的检测才使用新版。
+
 ## 时间配置
 
 全局和每个监测目标可以分别配置（单位：秒，管理页面支持适当换算为分钟/小时/天）：

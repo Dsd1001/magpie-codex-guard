@@ -11,6 +11,7 @@ on:
       - 'go.sum'
       - 'package.json'
       - 'scripts/build-release.sh'
+      - 'scripts/sync-fingerprint-bank.py'
   workflow_dispatch:
 
 permissions:
@@ -23,6 +24,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # GitHub's app-based repository API cannot ingest the binary directly
+      # from a local workspace. Pin and verify it in this trusted release job,
+      # then vendor the immutable artifact back into main before building.
+      - name: Sync and commit pinned upstream fingerprint artifact
+        run: |
+          set -eu
+          python3 scripts/sync-fingerprint-bank.py --write
+          python3 scripts/sync-fingerprint-bank.py --check
+          if ! git diff --quiet -- internal/fingerprint/data/shared_detector.bin internal/fingerprint/data/model_metadata.json; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add internal/fingerprint/data/shared_detector.bin internal/fingerprint/data/model_metadata.json
+            git commit -m 'chore(fingerprint): vendor verified lm-detector reference artifact [skip ci]'
+            git push origin 'HEAD:refs/heads/main'
+          fi
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.0'
@@ -33,6 +49,7 @@ jobs:
           cache: npm
       - name: Unit and static tests
         run: |
+          python3 scripts/sync-fingerprint-bank.py --check
           go test ./...
           go vet ./...
           npm ci
@@ -54,4 +71,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.25: source-only Magpie GitHub installs now pin the immutable SHA-256-verified alpha.24 fingerprint-default backend; rewritten README and legacy policy safeguards included."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.26: update embedded lm-detector fingerprint bank to 64 models (2026-10-27) and sync upstream sequence-shape scoring; new golden parity fixtures, immutable upstream SHA-256 checks and preserved isolation/timing state."

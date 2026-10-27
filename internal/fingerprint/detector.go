@@ -521,7 +521,10 @@ func sequenceLike(numbers [][]int) bool {
 		autocorr = append(autocorr, lag1/float64(n-1)/variance)
 		steps = append(steps, small/float64(n-1))
 	}
-	return median(autocorr) <= -.23 && median(steps) <= .05
+	// Match upstream shared-detector.ts (2026-10-24): reject only when
+	// BOTH signals are outside the model-like region. A valid model can
+	// have weak negative autocorrelation OR sufficiently few short steps.
+	return median(autocorr) <= -.23 || median(steps) <= .05
 }
 func canonicalExpected(raw string) string {
 	s := strings.ToLower(strings.TrimSpace(raw))

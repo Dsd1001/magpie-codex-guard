@@ -1,5 +1,4 @@
 {
-  "schema": "official-parity-results-v1",
   "results": [
     {
       "id": "gpt-6-astra",
@@ -9,28 +8,28 @@
       "top5": [
         {
           "model": "gpt-6-astra",
-          "probability": 0.9999538144358299,
-          "score": 4.011582635832819
+          "probability": 0.9999540246028941,
+          "score": 4.022001339831331
         },
         {
           "model": "gpt-6-sol",
-          "probability": 0.000040822908157082186,
-          "score": 1.9307585954841096
+          "probability": 0.00003603217897454484,
+          "score": 1.8989146155770458
+        },
+        {
+          "model": "gpt-6.1-terra",
+          "probability": 0.000004859680775651176,
+          "score": 1.4831728088091554
         },
         {
           "model": "gpt-5.6-sol",
-          "probability": 0.0000014235902374207874,
-          "score": 1.239761117617983
+          "probability": 0.0000013323854304048324,
+          "score": 1.214649286515768
         },
         {
           "model": "deepseek-v4-flash-0731",
-          "probability": 0.00000116875791856701,
-          "score": 1.1991502255129407
-        },
-        {
-          "model": "gpt-5.5",
-          "probability": 7.561784329019419e-7,
-          "score": 1.1094993723676734
+          "probability": 0.000001105586223299257,
+          "score": 1.1759281715259784
         }
       ]
     },
@@ -42,28 +41,28 @@
       "top5": [
         {
           "model": "gpt-6-astra",
-          "probability": 0.999954509202966,
-          "score": 3.9798248962704315
+          "probability": 0.9999412756584649,
+          "score": 3.952548645585434
         },
         {
           "model": "gpt-6-sol",
-          "probability": 0.00003729007872425009,
-          "score": 1.8803638690085338
+          "probability": 0.00003231175416821924,
+          "score": 1.8068494137342177
+        },
+        {
+          "model": "gpt-6.1-terra",
+          "probability": 0.00001789960083014139,
+          "score": 1.6842807088132745
         },
         {
           "model": "deepseek-v4.1-flash-1017",
-          "probability": 0.0000049021337881561795,
-          "score": 1.4625904965319285
+          "probability": 0.000004912845721283703,
+          "score": 1.4159806370420485
         },
         {
           "model": "deepseek-v4.1-flash",
-          "probability": 0.0000011522964585908864,
-          "score": 1.1644717778726454
-        },
-        {
-          "model": "gpt-5.5",
-          "probability": 3.2798967668945385e-7,
-          "score": 0.9057580734823235
+          "probability": 0.0000011098677210457034,
+          "score": 1.1072801905880008
         }
       ]
     },
@@ -75,28 +74,28 @@
       "top5": [
         {
           "model": "gpt-6-sol",
-          "probability": 0.9999644848336078,
-          "score": 4.051962899578579
+          "probability": 0.9999668030257017,
+          "score": 4.074616112945994
         },
         {
           "model": "gpt-6-astra",
-          "probability": 0.000020079090048679547,
-          "score": 1.8250406378463149
+          "probability": 0.000015670296824774365,
+          "score": 1.7787411459373366
         },
         {
           "model": "deepseek-v4.1-flash-1017",
-          "probability": 0.000006817220354723863,
-          "score": 1.6026268738536822
+          "probability": 0.0000062173118235664905,
+          "score": 1.5869090954914928
         },
         {
           "model": "gpt-5.6-sol",
-          "probability": 0.0000048655992903038665,
-          "score": 1.5331862074189748
+          "probability": 0.000004098151189610462,
+          "score": 1.5004169034215207
         },
         {
-          "model": "gpt-5.5",
-          "probability": 0.000001075511353371319,
-          "score": 1.2224090499600366
+          "model": "gpt-6.1-terra",
+          "probability": 0.000003846373369299146,
+          "score": 1.487259431535226
         }
       ]
     },
@@ -108,28 +107,28 @@
       "top5": [
         {
           "model": "gpt-6-sol",
-          "probability": 0.9999821429762424,
-          "score": 4.192919206438704
+          "probability": 0.9999788763039992,
+          "score": 4.176369274264768
         },
         {
           "model": "gpt-6-astra",
-          "probability": 0.0000063173267154825454,
-          "score": 1.7278994423348117
+          "probability": 0.000005743194286455464,
+          "score": 1.672199308173759
         },
         {
           "model": "gpt-5.5",
-          "probability": 0.000005515651015836512,
-          "score": 1.6999581154862162
+          "probability": 0.000005480412696425282,
+          "score": 1.662480359412572
         },
         {
           "model": "gpt-5.6-sol",
-          "probability": 0.000004203521529949982,
-          "score": 1.644023128084089
+          "probability": 0.000004058399687546014,
+          "score": 1.6001448761165604
         },
         {
-          "model": "gpt-5.6-terra",
-          "probability": 9.836849727549631e-7,
-          "score": 1.3449864227411112
+          "model": "gpt-6.1-terra",
+          "probability": 0.0000039412485796383255,
+          "score": 1.5940665501287916
         }
       ]
     },
@@ -141,28 +140,28 @@
       "top5": [
         {
           "model": "gpt-5.6-sol",
-          "probability": 0.9999470911515671,
-          "score": 4.0511648488393845
+          "probability": 0.9999541259206213,
+          "score": 4.099819646737343
         },
         {
           "model": "gpt-6-sol",
-          "probability": 0.00002412304095242113,
-          "score": 1.862025592195971
+          "probability": 0.000019619379287594536,
+          "score": 1.8505862554134236
         },
         {
           "model": "gpt-5.5",
-          "probability": 0.000014887244186998767,
-          "score": 1.7626475825396701
+          "probability": 0.000012144703808247518,
+          "score": 1.7510574197199018
         },
         {
           "model": "gpt-6-luna",
-          "probability": 0.000005309027111396528,
-          "score": 1.5503496657397318
+          "probability": 0.000005001704506185286,
+          "score": 1.5669687442267004
         },
         {
           "model": "gpt-5.6-terra",
-          "probability": 0.000003910075622547982,
-          "score": 1.4873761805801755
+          "probability": 0.00000396126218100731,
+          "score": 1.5185731454468154
         }
       ]
     },
@@ -174,28 +173,28 @@
       "top5": [
         {
           "model": "gpt-5.6-sol",
-          "probability": 0.9999880338593746,
-          "score": 4.290986918834253
+          "probability": 0.9999890648564252,
+          "score": 4.331908781974699
         },
         {
           "model": "gpt-6-sol",
-          "probability": 0.000005870044903291134,
-          "score": 1.8108462531514888
+          "probability": 0.000004827601781478116,
+          "score": 1.7916986279886045
         },
         {
           "model": "gpt-5.5",
-          "probability": 0.000004159691270172812,
-          "score": 1.7399314785032671
+          "probability": 0.0000035782017262738678,
+          "score": 1.7295503683499598
+        },
+        {
+          "model": "gpt-6.1-terra",
+          "probability": 8.242778737181496e-7,
+          "score": 1.4248973933170004
         },
         {
           "model": "gpt-6-astra",
-          "probability": 6.178968355246465e-7,
-          "score": 1.3473148343537067
-        },
-        {
-          "model": "gpt-6-luna",
-          "probability": 4.368395248060513e-7,
-          "score": 1.2759194634078432
+          "probability": 5.215009920090841e-7,
+          "score": 1.3298981986561458
         }
       ]
     },
@@ -207,28 +206,28 @@
       "top5": [
         {
           "model": "claude-opus-5",
-          "probability": 0.999595587052854,
-          "score": 3.9908033582576605
+          "probability": 0.9995991789528912,
+          "score": 4.088333885952407
         },
         {
           "model": "claude-opus-4.8",
-          "probability": 0.0003446075333598715,
-          "score": 2.349261419162465
+          "probability": 0.0003420231566338504,
+          "score": 2.4323240599674305
         },
         {
           "model": "claude-fable-5",
-          "probability": 0.000040133773520733885,
-          "score": 1.9065476850269447
+          "probability": 0.000040465093811992625,
+          "score": 1.9893981090661104
         },
         {
           "model": "claude-opus-4.7",
-          "probability": 0.00000872052224655728,
-          "score": 1.592240365201338
+          "probability": 0.00000849478750870635,
+          "score": 1.665471432179491
         },
         {
           "model": "claude-fable-5.1",
-          "probability": 0.000004994808443188574,
-          "score": 1.4774989836472316
+          "probability": 0.000004606252928632642,
+          "score": 1.5384649630823386
         }
       ]
     },
@@ -240,28 +239,28 @@
       "top5": [
         {
           "model": "claude-opus-5",
-          "probability": 0.9998559215846946,
-          "score": 4.049507319326335
+          "probability": 0.99986287710174,
+          "score": 4.148249964640625
         },
         {
           "model": "claude-opus-4.8",
-          "probability": 0.00010152181390707433,
-          "score": 2.156280349757207
+          "probability": 0.00009664212125821712,
+          "score": 2.229915958557369
         },
         {
           "model": "claude-fable-5",
-          "probability": 0.000021752874842273458,
-          "score": 1.8390928256216876
+          "probability": 0.000020963737791164574,
+          "score": 1.9127887833212662
         },
         {
           "model": "hy4-preview",
-          "probability": 0.000007106036463314869,
-          "score": 1.6087368260449844
+          "probability": 0.000006667019814667755,
+          "score": 1.6750563238566758
         },
         {
           "model": "claude-opus-4.7",
-          "probability": 0.000006833061707185513,
-          "score": 1.600671537668862
+          "probability": 0.000006564077912287517,
+          "score": 1.6718272163331322
         }
       ]
     },
@@ -273,28 +272,28 @@
       "top5": [
         {
           "model": "claude-haiku-4.5",
-          "probability": 0.9999999889513883,
-          "score": 5.243729276758835
+          "probability": 0.9999999908507474,
+          "score": 5.369048768578974
         },
         {
           "model": "seed-2.1-turbo",
-          "probability": 3.310351023993996e-9,
-          "score": 1.223372844109388
+          "probability": 2.7416407431722513e-9,
+          "score": 1.2779702762990173
         },
         {
           "model": "mimo-v2.5",
-          "probability": 1.687711247781068e-9,
-          "score": 1.0846650675729475
+          "probability": 1.5847481060374324e-9,
+          "score": 1.1642253943859622
         },
         {
           "model": "deepseek-v3.2",
-          "probability": 1.3548158948069543e-9,
-          "score": 1.0394282614212522
+          "probability": 1.0580765427850433e-9,
+          "score": 1.0803953777139048
         },
         {
           "model": "grok-4.5",
-          "probability": 9.51762387898343e-10,
-          "score": 0.9667254881052234
+          "probability": 6.835319496299099e-10,
+          "score": 0.9897253330911676
         }
       ]
     },
@@ -306,28 +305,28 @@
       "top5": [
         {
           "model": "claude-haiku-4.5",
-          "probability": 0.9999999908018739,
-          "score": 5.345556134116381
+          "probability": 0.999999992694675,
+          "score": 5.474947208833855
         },
         {
           "model": "deepseek-v3.2",
-          "probability": 5.206431604095417e-9,
-          "score": 1.4184374552609884
+          "probability": 4.235871553303788e-9,
+          "score": 1.4741440680625968
         },
         {
           "model": "grok-4.5",
-          "probability": 9.301802852903287e-10,
-          "score": 1.0638297254809266
+          "probability": 7.167122351985653e-10,
+          "score": 1.1054601479819244
         },
         {
           "model": "mimo-v2.5",
-          "probability": 9.154903159829324e-10,
-          "score": 1.0605521520749215
+          "probability": 6.786541123313989e-10,
+          "score": 1.0941375972329714
         },
         {
           "model": "deepseek-v4.1-flash",
-          "probability": 3.929447647030448e-10,
-          "score": 0.8864077618968601
+          "probability": 3.1705875668410817e-10,
+          "score": 0.9362143509900389
         }
       ]
     },
@@ -339,28 +338,28 @@
       "top5": [
         {
           "model": "gemini-3.1-pro-preview",
-          "probability": 0.9999979659905317,
-          "score": 4.608178851925542
+          "probability": 0.9999977472500455,
+          "score": 4.635790538523482
         },
         {
           "model": "gemini-3.6-flash",
-          "probability": 9.715901762154184e-7,
-          "score": 1.7576955531703118
+          "probability": 9.882841510015847e-7,
+          "score": 1.7664333727178378
         },
         {
           "model": "gemini-2.5-pro",
-          "probability": 3.4368116286277023e-7,
-          "score": 1.543725033130817
+          "probability": 3.6125773382419914e-7,
+          "score": 1.5575957057381995
         },
         {
           "model": "gemini-3.8-flash",
-          "probability": 2.722101380006987e-7,
-          "score": 1.4957225796054954
+          "probability": 2.5032229384466235e-7,
+          "score": 1.4814707693106655
         },
         {
           "model": "gemini-3.5-flash",
-          "probability": 2.4754310201858473e-7,
-          "score": 1.4761646577281478
+          "probability": 2.4403170188933073e-7,
+          "score": 1.476189305122339
         }
       ]
     },
@@ -372,28 +371,28 @@
       "top5": [
         {
           "model": "gemini-3.1-pro-preview",
-          "probability": 0.999999182113238,
-          "score": 4.5811954624535165
+          "probability": 0.9999991340891003,
+          "score": 4.619671490291
         },
         {
           "model": "gemini-3.5-flash",
-          "probability": 2.7553551862835777e-7,
-          "score": 1.4712389645469126
+          "probability": 2.7508096765539154e-7,
+          "score": 1.484923370691879
         },
         {
           "model": "gemini-3.8-flash",
-          "probability": 2.7155248129989103e-7,
-          "score": 1.4682408969290208
+          "probability": 2.183083254562924e-7,
+          "score": 1.4369550363937642
+        },
+        {
+          "model": "gemini-3.5-flash-lite",
+          "probability": 1.1574382392027771e-7,
+          "score": 1.3052813617522299
         },
         {
           "model": "gemini-3.6-flash",
-          "probability": 8.045344298145728e-8,
-          "score": 1.2177739737581348
-        },
-        {
-          "model": "deepseek-v3.2",
-          "probability": 3.146982988181758e-8,
-          "score": 1.0245104218624115
+          "probability": 6.74310309993944e-8,
+          "score": 1.1931669298220307
         }
       ]
     },
@@ -405,28 +404,28 @@
       "top5": [
         {
           "model": "deepseek-v3.2",
-          "probability": 0.9999993587722162,
-          "score": 4.7251412042172545
-        },
-        {
-          "model": "deepseek-v4-flash",
-          "probability": 2.0944768523081521e-7,
-          "score": 1.5587194006691498
+          "probability": 0.9999993919936521,
+          "score": 4.804726883719623
         },
         {
           "model": "gpt-4o",
-          "probability": 1.7420894917036603e-7,
-          "score": 1.5207896533833276
+          "probability": 1.8897673122463074e-7,
+          "score": 1.5920693185780155
+        },
+        {
+          "model": "deepseek-v4-flash",
+          "probability": 1.8551173742789643e-7,
+          "score": 1.5882291186370698
         },
         {
           "model": "mimo-v2.5",
-          "probability": 9.455127715849496e-8,
-          "score": 1.3949642926953292
+          "probability": 7.89309176630768e-8,
+          "score": 1.4108990239783434
         },
         {
           "model": "qwen3.8-flash",
-          "probability": 6.301819961655276e-8,
-          "score": 1.3114286862333229
+          "probability": 5.9182436377991854e-8,
+          "score": 1.3511457377136482
         }
       ]
     },
@@ -438,34 +437,33 @@
       "top5": [
         {
           "model": "deepseek-v3.2",
-          "probability": 0.999998769545391,
-          "score": 4.5032855147362145
+          "probability": 0.99999817808892,
+          "score": 4.524034263781303
+        },
+        {
+          "model": "kimi-k3.1-pro",
+          "probability": 4.6858568447579805e-7,
+          "score": 1.4998194081169003
         },
         {
           "model": "grok-4.6",
-          "probability": 3.725169280228188e-7,
-          "score": 1.4554201298998561
+          "probability": 4.0575455063223103e-7,
+          "score": 1.4699435002240206
         },
         {
           "model": "grok-4.5",
-          "probability": 1.9764780110905908e-7,
-          "score": 1.324924509880273
+          "probability": 2.2194776167076714e-7,
+          "score": 1.3447489715206857
         },
         {
           "model": "gpt-4o",
-          "probability": 1.2969436440539806e-7,
-          "score": 1.2381795527134156
-        },
-        {
-          "model": "qwen3.8-flash",
-          "probability": 1.2607504026108706e-7,
-          "score": 1.2323520237512886
+          "probability": 1.5521873298613091e-7,
+          "score": 1.270540560054224
         }
       ]
     },
     {
       "id": "incomplete",
-      "decision": "unscorable",
       "predicted": "",
       "used_outputs": 0,
       "probability_status": "unavailable",
@@ -479,28 +477,28 @@
       "top5": [
         {
           "model": "gpt-6-astra",
-          "probability": 0.9999538144358299,
-          "score": 4.011582635832819
+          "probability": 0.9999540246028941,
+          "score": 4.022001339831331
         },
         {
           "model": "gpt-6-sol",
-          "probability": 0.000040822908157082186,
-          "score": 1.9307585954841096
+          "probability": 0.00003603217897454484,
+          "score": 1.8989146155770458
+        },
+        {
+          "model": "gpt-6.1-terra",
+          "probability": 0.000004859680775651176,
+          "score": 1.4831728088091554
         },
         {
           "model": "gpt-5.6-sol",
-          "probability": 0.0000014235902374207874,
-          "score": 1.239761117617983
+          "probability": 0.0000013323854304048324,
+          "score": 1.214649286515768
         },
         {
           "model": "deepseek-v4-flash-0731",
-          "probability": 0.00000116875791856701,
-          "score": 1.1991502255129407
-        },
-        {
-          "model": "gpt-5.5",
-          "probability": 7.561784329019419e-7,
-          "score": 1.1094993723676734
+          "probability": 0.000001105586223299257,
+          "score": 1.1759281715259784
         }
       ]
     }

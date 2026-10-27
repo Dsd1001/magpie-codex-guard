@@ -35,9 +35,11 @@ explicit enrollment and a new monitoring target.
 On a brand-new Guard database the default automatic question is the three-sample
 model fingerprint objective. Existing installations retain their saved question
 selection. Schedules and production routing modifications remain opt-in.
-Providers/models not covered by the local reference bank must be mapped before
-enabling fingerprint-based production quarantine; otherwise the automatic check
-is unavailable and quarantines conservatively.
+The bundled fingerprint bank is pinned to lm-detector's 2026-10-27 reference
+(64 models), including the newly enrolled `gpt-6.1-terra`. Providers/models
+not covered by the local reference bank must be mapped before enabling
+fingerprint-based production quarantine; otherwise the automatic check is
+unavailable and quarantines conservatively.
 
 ## Isolation and recovery
 
@@ -86,9 +88,9 @@ tests cover single, multiple, disabled and duplicate saved keys.
 ## Packaging
 
 Build and install a package containing the updated helper with
-`npm run build:release`. A source-only `github:` installation at alpha.25 pins the immutable,
-SHA-256-verified alpha.24 backend. Fresh installations select fingerprint
-scoring by default, while legacy settings remain unchanged. Unavailable-check
-quarantine, the unified question bank and custom timings remain supported.
-The alpha.25 Release package includes the current Go helper.
-Both installation paths retain archive and executable SHA-256 checks.
+`npm run build:release`. The alpha.26 Release package includes the new
+64-model fingerprint bank and the corrected upstream sequence-shape scorer.
+A source-only `github:` installation is temporarily pinned to the verified
+alpha.24 backend until the alpha.26 artifact is published and verified; the
+next installer release will pin alpha.26. Both installation forms preserve
+existing monitor settings and require SHA-256 checks on downloadable assets.
