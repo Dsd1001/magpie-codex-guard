@@ -1,5 +1,5 @@
 name: Build Codex Guard Alpha Release
-# CI verifies deterministic per-target timing settings and select options.
+# CI waits for asynchronous management UI actions before closing test pages.
 on:
   push:
     branches: [main]

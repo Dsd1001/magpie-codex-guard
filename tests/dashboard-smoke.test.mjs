@@ -214,6 +214,7 @@ test('fingerprint as objective is optional; old periodic and risk-specific contr
   checkbox.checked=false;
   w.document.querySelector('#saveAutoPrompts').click();
   await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='off');
+  await new Promise(resolve=>setTimeout(resolve,85));
  }finally{dom.window.close()}
 });
 
@@ -323,6 +324,7 @@ test('fingerprint-only question mode is permitted, while mixed unrotated mode is
   save.click();
   await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
   assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body).prompt_ids,[]);
+  await new Promise(resolve=>setTimeout(resolve,85));
  }finally{dom.window.close()}
 });
 
@@ -363,5 +365,6 @@ test('time policy edits persist global defaults and per-target overrides without
   assert.equal(body.inherit,false);
   assert.equal(body.reschedule,false);
   assert.equal(state.state.route.auto_apply,false);
+  await new Promise(resolve=>setTimeout(resolve,85));
  }finally{dom.window.close()}
 });
