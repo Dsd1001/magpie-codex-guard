@@ -148,14 +148,14 @@ function renderRules(){
  const all=current.prompts||[];
  const policy=s.auto_prompt_policy||{};
  const chosen=new Set(policy.configured?policy.prompt_ids:all.filter(p=>p.automatic&&p.kind!=='fingerprint').map(p=>p.id));
- for(const p of all.filter(p=>p.automatic&&p.kind!=='fingerprint')){
+ if(policy.fingerprint_mode==='objective_rotation')chosen.add('model-fingerprint');
+ for(const p of all.filter(p=>p.automatic||p.kind==='fingerprint')){
   const l=elem('label','check');
   const input=elem('input');input.type='checkbox';input.value=p.id;input.checked=chosen.has(p.id);
   l.append(input,elem('span','',p.name));
   opts.append(l);
  }
  $('rotatePrompts').checked=Boolean(policy.rotate||!policy.configured);
- $('fingerprintAutomatic').checked=policy.fingerprint_mode==='objective_rotation';
  const list=$('customList');list.replaceChildren();
  for(const p of (s.custom_prompts||[])){
   const wrap=elem('div','sub-row');
@@ -379,9 +379,6 @@ $('saveAutoSyncAccountRoster').onclick=async()=>{
   notice(enabled?'账号自动同步已启用；已从 Magpie 更新监测目标。':'账号自动同步已关闭；原有监测目标保留。');
  }catch(e){notice('保存账号同步设置失败：'+(e?.message||String(e)),true)}
 };
-$('fingerprintAutomatic').onchange=()=>{
- if($('fingerprintAutomatic').checked)$('rotatePrompts').checked=true;
-};
 $('manualPrompt').onchange=updateFingerprintExpected;
 $('manualTarget').onchange=updateFingerprintExpected;
 $('runManualTest').onclick=()=>{
@@ -398,11 +395,8 @@ $('saveFingerprintExpected').onclick=()=>action(async()=>{
 });
 $('saveAutoPrompts').onclick=()=>action(async()=>{
  const prompt_ids=[...document.querySelectorAll('#promptOptions input:checked')].map(x=>x.value);
- const fingerprint_mode=$('fingerprintAutomatic').checked?'objective_rotation':'off';
- if(!prompt_ids.length&&fingerprint_mode!=='objective_rotation')throw Error('至少选择一道客观题');
- if(fingerprint_mode==='objective_rotation'&&prompt_ids.length&&!$('rotatePrompts').checked)throw Error('指纹参与客观题轮换时，请勾选按轮次顺序轮换');
- if(fingerprint_mode==='objective_rotation'&&!confirm('指纹题一轮包含 3 次采样，可靠判定不一致就立即隔离；普通客观题仍须连续 3 次错误。预期模型自动匹配检测模型。确定启用？'))return;
- await api('/api/auto-prompts','POST',{prompt_ids,rotate:$('rotatePrompts').checked,fingerprint_mode});
+ if(!prompt_ids.length)throw Error('至少选择一道客观题');
+ await api('/api/auto-prompts','POST',{prompt_ids,rotate:$('rotatePrompts').checked});
 });
 $('saveCustom').onclick=()=>action(async()=>{
  const body={

@@ -43,20 +43,32 @@ func objectiveTransition(t *AccountTarget, h *QuarantineHold, verdict, prompt st
 // All automatic prompts share recovery and isolation scheduling.
 // A three-sample fingerprint batch is ONE scored objective answer: one reliable
 // mismatch directly isolates. Other objective questions require three
-// consecutive wrong answers to the same question. Inconclusive results are
-// neutral and cannot create a hold or release an existing one.
+// consecutive wrong answers to the same question. An unavailable automatic
+// verdict (network error, invalid output, indeterminate fingerprint, etc.)
+// cannot establish a valid passing check and therefore isolates immediately.
+// It never counts as an incorrect answer; manual checks do not use this path.
 func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, verdict, prompt string, now time.Time, timing TimingPolicy) (createHold, releaseHold bool) {
 	target.CheckedAt = now
 	if verdict != "passed" && verdict != "failed" {
-		target.Reason = "上游请求失败或无法可靠判分，本轮不计入质量结果"
+		target.ConsecutivePasses = 0
 		if hold != nil {
+			// Recovery requires two consecutive valid passing checks. A
+			// missing verdict breaks that streak, but never releases a hold.
+			hold.ConfirmationPasses = 0
+			hold.FirstRecheckDone = true
+			target.State = PhaseIsolated
+			target.Reason = "隔离复测不可用，尚未获得有效通过结果"
 			hold.NextCheckAt = now.Add(timing.unavailable())
 			target.NextCheckAt = hold.NextCheckAt
-		} else {
-			target.State = "unavailable"
-			target.NextCheckAt = now.Add(timing.unavailable())
+			return false, false
 		}
-		return false, false
+		target.LastAutoPrompt = prompt
+		target.State = PhaseIsolated
+		target.Reason = "自动检测不可用，未获得有效通过结果，直接隔离"
+		// Use the customizable unavailable retry timer for holds created
+		// by an unavailable check; never bypass the original hold.
+		target.NextCheckAt = now.Add(timing.unavailable())
+		return true, false
 	}
 	if hold != nil {
 		if verdict == "passed" {
@@ -78,6 +90,7 @@ func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, 
 		}
 		hold.ConfirmationPasses = 0
 		hold.FirstRecheckDone = true
+		hold.Cause = "objective_failed"
 		target.ConsecutivePasses = 0
 		target.ConsecutiveFails++
 		target.State = PhaseIsolated
@@ -126,11 +139,16 @@ func startHold(t AccountTarget, now time.Time) QuarantineHold {
 	return startHoldWithTiming(t, now, DefaultTimingPolicy())
 }
 func startHoldWithTiming(t AccountTarget, now time.Time, timing TimingPolicy) QuarantineHold {
-	return QuarantineHold{
+	hold := QuarantineHold{
 		Account: t.Account, Model: t.Model, Prompt: t.LastAutoPrompt,
 		Risk: "isolated", Reason: t.Reason,
 		Since: now, NextCheckAt: now.Add(timing.first()),
 	}
+	if t.Reason == "自动检测不可用，未获得有效通过结果，直接隔离" {
+		hold.Cause = "unavailable"
+		hold.NextCheckAt = now.Add(timing.unavailable())
+	}
+	return hold
 }
 
 // Legacy internal helper: no longer used for new holds. Old fingerprint

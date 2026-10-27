@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -43,7 +44,7 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 		s.mu.Unlock()
 		return errors.New("已有账号检测正在执行")
 	}
-	if s.effectiveAutoPromptPolicyLocked().FingerprintMode != FingerprintObjective {
+	if !slices.Contains(s.effectiveAutoPromptPolicyLocked().PromptIDs, FingerprintPromptID) {
 		s.mu.Unlock()
 		return errors.New("模型指纹未加入自动客观题题库")
 	}

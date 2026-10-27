@@ -54,4 +54,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.21: source-only GitHub installer now uses verified immutable alpha.20 backend with SHA-256 checks; both installation forms support unified isolation and customizable timing."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.22: automatic unavailable verdicts now quarantine immediately with configurable retries; fingerprint is an ordinary auto-question checkbox without separate modes; bundled backend preserves state and custom timings."

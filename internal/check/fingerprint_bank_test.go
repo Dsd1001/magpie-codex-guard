@@ -67,7 +67,7 @@ func fingerprintBankFixture(t *testing.T) (*Service, *atomic.Int32, func()) {
 	return s, count, func() { s.Close() }
 }
 
-func TestFingerprintPromptListedButNeverObjectiveRubric(t *testing.T) {
+func TestFingerprintPromptListedAsOrdinarySelectableObjective(t *testing.T) {
 	s, _, close := fingerprintBankFixture(t)
 	defer close()
 	all := s.PromptCatalog()
@@ -75,7 +75,7 @@ func TestFingerprintPromptListedButNeverObjectiveRubric(t *testing.T) {
 	for _, p := range all {
 		if p.ID == FingerprintPromptID {
 			found = true
-			if p.Kind != "fingerprint" || p.Automatic {
+			if p.Kind != "fingerprint" {
 				t.Fatalf("wrong fingerprint catalog type: %+v", p)
 			}
 		}
@@ -83,8 +83,8 @@ func TestFingerprintPromptListedButNeverObjectiveRubric(t *testing.T) {
 	if !found {
 		t.Fatal("fingerprint missing from question bank")
 	}
-	if err := s.ConfigureAutoPrompts([]string{FingerprintPromptID}, true); err == nil {
-		t.Fatal("fingerprint wrongly entered objective failure rubric")
+	if err := s.ConfigureAutoPrompts([]string{FingerprintPromptID}, true); err != nil {
+		t.Fatal("fingerprint should be selectable beside ordinary questions:", err)
 	}
 	if got := s.AutoPromptSettings().FingerprintMode; got != FingerprintOff {
 		t.Fatalf("default must disable standalone fingerprint jobs: %q", got)

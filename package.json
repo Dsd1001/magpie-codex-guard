@@ -1,6 +1,6 @@
 {
   "name": "magpie-codex-guard",
-  "version": "0.1.0-alpha.21",
+  "version": "0.1.0-alpha.22",
   "type": "module",
   "main": "./plugin/index.mjs",
   "description": "Fixed Codex and API upstream probes, local model fingerprints and safe Magpie Gateway Key quarantine.",

@@ -150,12 +150,8 @@ func TestScopeAdditionNeverAutoAdoptedButHealthyProbeAllowed(t *testing.T) {
 	}
 	s.schedulerTick(time.Now())
 	s.wg.Wait()
-	if calls.Load() != 1 {
-		t.Fatalf("hourly check was blocked: %d", calls.Load())
-	}
-	last := s.state.AccountResults[len(s.state.AccountResults)-1]
-	if last.Account != "bbb" || last.Verdict == "unavailable" {
-		t.Fatalf("bad automatic probe: %+v", last)
+	if calls.Load() != 0 {
+		t.Fatalf("new checks must stop when routing cannot isolate an unavailable account: %d", calls.Load())
 	}
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
@@ -174,8 +170,8 @@ func TestScopeAdditionNeverAutoAdoptedButHealthyProbeAllowed(t *testing.T) {
 	}
 	s.schedulerTick(time.Now().Add(3 * time.Minute))
 	s.wg.Wait()
-	if calls.Load() != 1 {
-		t.Fatal("third failure executed without isolation guarantee")
+	if calls.Load() != 0 {
+		t.Fatal("an unheld account was checked without isolation guarantee")
 	}
 	if _, hold := s.state.Holds["bbb"]; hold {
 		t.Fatal("new unisolated hold created")

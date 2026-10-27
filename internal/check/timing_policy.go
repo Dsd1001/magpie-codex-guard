@@ -171,6 +171,9 @@ func (s *Service) rescheduleTargetLocked(t *AccountTarget, now time.Time) {
 			anchor, interval = t.CheckedAt, p.recovery()
 		case !hold.FirstRecheckDone:
 			anchor, interval = hold.Since, p.first()
+			if hold.Cause == "unavailable" {
+				interval = p.unavailable()
+			}
 		default:
 			anchor, interval = t.CheckedAt, p.repeat()
 		}

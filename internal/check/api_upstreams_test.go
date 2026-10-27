@@ -233,8 +233,8 @@ func TestAPIUnavailableAndScopeConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
-	if len(s.state.Holds) != 0 || s.state.AccountTargets[accountTargetID(id, "pipio/gpt-6.1-sol")].ConsecutiveFails != 0 {
-		t.Fatal("HTTP 429 created a quality failure")
+	if s.state.Holds[id].Cause != "unavailable" || s.state.AccountTargets[accountTargetID(id, "pipio/gpt-6.1-sol")].ConsecutiveFails != 0 {
+		t.Fatal("HTTP 429 must quarantine without recording an incorrect answer")
 	}
 	s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
 	if _, err := s.ApplyRouting(context.Background(), false); err != nil {

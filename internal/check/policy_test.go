@@ -64,7 +64,7 @@ func TestUnifiedQuarantineFirstSixThenTwentyFour(t *testing.T) {
 	}
 }
 
-func TestRecoveryRequiresTwoValidPassesAndNeutralIsUnchanged(t *testing.T) {
+func TestRecoveryRequiresTwoConsecutiveValidPasses(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
 	hold := startHold(*target, now)
@@ -74,20 +74,63 @@ func TestRecoveryRequiresTwoValidPassesAndNeutralIsUnchanged(t *testing.T) {
 		t.Fatal("first pass was not confirmation stage")
 	}
 	_, release = objectiveTransition(target, &hold, "unavailable", "milk", target.NextCheckAt)
-	if release || hold.ConfirmationPasses != 1 || !target.NextCheckAt.Equal(first.Add(SuspectInterval+UnavailableInterval)) {
-		t.Fatal("unavailable must remain neutral and apply retry policy")
+	if release || hold.ConfirmationPasses != 0 || !target.NextCheckAt.Equal(first.Add(SuspectInterval+UnavailableInterval)) {
+		t.Fatal("unavailable must keep hold and invalidate recovery streak")
+	}
+	_, release = objectiveTransition(target, &hold, "passed", "milk", target.NextCheckAt)
+	if release || hold.ConfirmationPasses != 1 {
+		t.Fatal("first pass after unavailable must not release")
 	}
 	_, release = objectiveTransition(target, &hold, "passed", "milk", target.NextCheckAt)
 	if !release {
-		t.Fatal("second valid pass must recover")
+		t.Fatal("two consecutive passes must recover")
 	}
 }
 
-func TestIndeterminateFingerprintDoesNotCreateHold(t *testing.T) {
+func TestIndeterminateFingerprintRemainsUnavailableVerdict(t *testing.T) {
 	if got := fingerprintAsObjectiveVerdict(FingerprintReport{Verdict: "indeterminate", UsedOutputs: 3}, "gpt-6-astra"); got != "unavailable" {
 		t.Fatal("indeterminate fingerprint must be neutral")
 	}
 	if got := fingerprintAsObjectiveVerdict(FingerprintReport{Verdict: "mismatch", UsedOutputs: 2}, "gpt-6-astra"); got != "unavailable" {
 		t.Fatal("partial fingerprint batch must be neutral")
+	}
+}
+
+func TestUnavailableAutomaticCheckCreatesHoldWithoutFalseAnswerCount(t *testing.T) {
+	now := time.Date(2026, 10, 27, 6, 0, 0, 0, time.UTC)
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol", Enabled: true, State: PhaseHealthy}
+	timing := DefaultTimingPolicy()
+	timing.UnavailableSeconds = 90
+	create, release := objectiveTransitionWithTiming(target, nil, "unavailable", "milk", now, timing)
+	if !create || release || target.State != PhaseIsolated || target.ConsecutiveFails != 0 || target.LastAutoPrompt != "milk" {
+		t.Fatalf("unavailable automatic check must isolate without scoring an incorrect answer: %+v", target)
+	}
+	hold := startHoldWithTiming(*target, now, timing)
+	if hold.Cause != "unavailable" || !hold.NextCheckAt.Equal(now.Add(90*time.Second)) {
+		t.Fatalf("unavailable hold must use customized retry interval: %+v", hold)
+	}
+	_, release = objectiveTransitionWithTiming(target, &hold, "unavailable", "milk", hold.NextCheckAt, timing)
+	if release || hold.ConfirmationPasses != 0 {
+		t.Fatal("second unavailable check must not release hold")
+	}
+	for n := 1; n <= 2; n++ {
+		_, release = objectiveTransitionWithTiming(target, &hold, "passed", "milk", hold.NextCheckAt, timing)
+		if release != (n == 2) {
+			t.Fatalf("recovery requires two valid passes, n=%d release=%v", n, release)
+		}
+	}
+}
+
+func TestUnavailableFingerprintIsolatesWithoutCountingMismatch(t *testing.T) {
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
+	now := time.Now()
+	report := FingerprintReport{Verdict: "indeterminate", UsedOutputs: 2}
+	verdict := fingerprintAsObjectiveVerdict(report, "gpt-6-astra")
+	if verdict != "unavailable" {
+		t.Fatalf("unexpected fingerprint verdict: %s", verdict)
+	}
+	create, _ := objectiveTransition(target, nil, verdict, FingerprintPromptID, now)
+	if !create || target.ConsecutiveFails != 0 || target.State != PhaseIsolated {
+		t.Fatalf("inconclusive fingerprint must isolate without mismatch count: %+v", target)
 	}
 }

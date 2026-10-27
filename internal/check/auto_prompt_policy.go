@@ -34,7 +34,7 @@ func effectiveFingerprintMode(mode string) string {
 func (s *Service) eligibleAutoPromptsLocked() []Prompt {
 	var prompts []Prompt
 	for _, prompt := range Prompts {
-		if prompt.Automatic && prompt.Kind != "fingerprint" {
+		if prompt.Automatic || prompt.ID == FingerprintPromptID {
 			prompts = append(prompts, prompt)
 		}
 	}
@@ -49,18 +49,20 @@ func (s *Service) eligibleAutoPromptsLocked() []Prompt {
 func (s *Service) effectiveAutoPromptPolicyLocked() AutoPromptPolicy {
 	policy := s.state.AutoPromptPolicy
 	if policy.Configured {
-		return AutoPromptPolicy{
-			Configured: true, Rotate: policy.Rotate,
-			PromptIDs:       slices.Clone(policy.PromptIDs),
-			FingerprintMode: effectiveFingerprintMode(policy.FingerprintMode),
+		ids := slices.Clone(policy.PromptIDs)
+		if effectiveFingerprintMode(policy.FingerprintMode) == FingerprintObjective && !slices.Contains(ids, FingerprintPromptID) {
+			ids = append(ids, FingerprintPromptID) // older saved UI selection
 		}
+		return AutoPromptPolicy{Configured: true, Rotate: policy.Rotate, PromptIDs: ids, FingerprintMode: FingerprintOff}
 	}
 	// Backward compatible: existing installations still use all enabled
 	// auto questions until the operator saves their own selection.
 	eligible := s.eligibleAutoPromptsLocked()
 	ids := make([]string, 0, len(eligible))
 	for _, prompt := range eligible {
-		ids = append(ids, prompt.ID)
+		if prompt.ID != FingerprintPromptID {
+			ids = append(ids, prompt.ID) // legacy defaults never auto-opt-in to fingerprint
+		}
 	}
 	return AutoPromptPolicy{Configured: false, Rotate: true, PromptIDs: ids, FingerprintMode: effectiveFingerprintMode(policy.FingerprintMode)}
 }
@@ -83,11 +85,7 @@ func (s *Service) activeAccountPromptsLocked() []Prompt {
 			selected = append(selected, prompt)
 		}
 	}
-	if policy.FingerprintMode == FingerprintObjective {
-		if prompt, ok := FindPrompt(FingerprintPromptID); ok {
-			selected = append(selected, prompt)
-		}
-	}
+
 	return selected
 }
 
@@ -137,18 +135,18 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 		return errors.New("有检测正在运行，请结束后再更新自动检测题库")
 	}
 	current := s.effectiveAutoPromptPolicyLocked()
-	if fingerprintMode == "" {
-		fingerprintMode = current.FingerprintMode
+	if fingerprintMode != "" && fingerprintMode != FingerprintOff && fingerprintMode != FingerprintObjective {
+		return errors.New("旧版独立指纹复核模式已停用")
 	}
-	if fingerprintMode != FingerprintObjective && fingerprintMode != FingerprintOff {
-		return errors.New("指纹只能作为自动客观题参与轮换或关闭")
+	// A legacy client may still send the old mode flag. Canonical storage
+	// always uses the same prompt ID list for fingerprint and ordinary questions.
+	ids = slices.Clone(ids)
+	if fingerprintMode == FingerprintObjective && !slices.Contains(ids, FingerprintPromptID) {
+		ids = append(ids, FingerprintPromptID)
 	}
 	available := s.eligibleAutoPromptsLocked()
-	if len(ids) == 0 && fingerprintMode != FingerprintObjective {
+	if len(ids) == 0 {
 		return errors.New("自动检测题库至少需要选择一道支持自动判分的题目")
-	}
-	if fingerprintMode == FingerprintObjective && len(ids) > 0 && !rotate {
-		return errors.New("指纹参与客观题轮换时，请开启按轮次轮换")
 	}
 	// A held account must continue recovering with its original question.
 	// Refuse question-bank edits that would orphan an active isolation.
@@ -162,10 +160,7 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 				}
 			}
 		}
-		if prompt == FingerprintPromptID && fingerprintMode != FingerprintObjective {
-			return errors.New("已有账号因指纹题隔离，恢复之前不能停用指纹题")
-		}
-		if prompt != "" && prompt != FingerprintPromptID && !slices.Contains(ids, prompt) {
+		if prompt != "" && !slices.Contains(ids, prompt) {
 			return errors.New("已有账号正在隔离复测，不能删除其原检测题")
 		}
 	}
@@ -187,26 +182,16 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 		seen[id] = true
 	}
 	desired := AutoPromptPolicy{
-		Configured: true, Rotate: rotate, PromptIDs: slices.Clone(ids), FingerprintMode: fingerprintMode,
+		Configured: true, Rotate: rotate, PromptIDs: slices.Clone(ids), FingerprintMode: FingerprintOff,
 	}
-	fingerprintChanged := current.FingerprintMode != desired.FingerprintMode
-	objectiveChanged := current.Rotate != desired.Rotate ||
-		!slices.Equal(current.PromptIDs, desired.PromptIDs) ||
-		(fingerprintChanged && (current.FingerprintMode == FingerprintObjective || desired.FingerprintMode == FingerprintObjective))
-	if !objectiveChanged && !fingerprintChanged && s.state.AutoPromptPolicy.Configured {
+	objectiveChanged := current.Rotate != desired.Rotate || !slices.Equal(current.PromptIDs, desired.PromptIDs)
+	if !objectiveChanged && s.state.AutoPromptPolicy.Configured && s.state.AutoPromptPolicy.FingerprintMode == FingerprintOff {
 		return nil
 	}
 	before := s.state.AutoPromptPolicy
 	var targets map[string]AccountTarget
 	if objectiveChanged {
 		targets = s.resetAutoPromptStreaksLocked()
-	} else if fingerprintChanged {
-		targets = make(map[string]AccountTarget, len(s.state.AccountTargets))
-		for id, t := range s.state.AccountTargets {
-			if t != nil {
-				targets[id] = *t
-			}
-		}
 	}
 	s.state.AutoPromptPolicy = desired
 	if err := s.store.Save(s.state); err != nil {
@@ -235,7 +220,7 @@ func (s *Service) reconcileAutoPromptPolicyLocked() {
 			selected = append(selected, id)
 		}
 	}
-	if len(selected) == 0 && effectiveFingerprintMode(s.state.AutoPromptPolicy.FingerprintMode) != FingerprintObjective {
+	if len(selected) == 0 {
 		selected = []string{"milk"}
 	}
 	s.state.AutoPromptPolicy.PromptIDs = selected

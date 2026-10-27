@@ -50,11 +50,8 @@
       <div class="section-head"><div><h1>检测题库</h1><p>普通客观题、自定义题连续 3 次有效错误直接隔离；指纹题完成 3 次采样后，只要一次可靠判定不一致就立即隔离。无额外指纹复核。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
-        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题（含指纹轮换模式）</label>
-        <div class="fingerprint-policy">
-          <label class="check"><input type="checkbox" id="fingerprintAutomatic"> 将指纹检测加入自动客观题轮换</label>
-          <p class="hint">指纹题一轮采样 3 次上游请求，仅计一次判分：可靠不一致立即隔离。普通客观题需连续 3 次有效错误才隔离；采样失败或不可判定不计失败。指纹自动匹配当前检测模型的参考类别，不再有额外指纹复核。手动指纹只记录结果。</p>
-        </div>
+        <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题</label>
+        <p class="hint">模型指纹与牛奶题、糖果题并列选择，不再存在额外的指纹复核。指纹题一轮 3 次采样，可靠不一致立即隔离；普通题同题连续 3 次错误隔离。自动检测不可用也会隔离，直至原题连续 2 次有效通过。</p>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
       </div>
       <div class="card form-card">
@@ -123,7 +120,7 @@
           <label>隔离首次复测<div class="timing-value"><input id="timingFirst" type="number" min="1"><select id="timingFirstUnit"><option value="3600">小时</option><option value="86400">天</option><option value="60">分钟</option><option value="1">秒</option></select></div></label>
           <label>隔离后续复测<div class="timing-value"><input id="timingRepeat" type="number" min="1"><select id="timingRepeatUnit"><option value="3600">小时</option><option value="86400">天</option><option value="60">分钟</option><option value="1">秒</option></select></div></label>
           <label>恢复二次确认<div class="timing-value"><input id="timingRecovery" type="number" min="1"><select id="timingRecoveryUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></div></label>
-          <label>不可判定 / 请求失败重试<div class="timing-value"><input id="timingUnavailable" type="number" min="1"><select id="timingUnavailableUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></div></label>
+          <label>检测不可用隔离复测<div class="timing-value"><input id="timingUnavailable" type="number" min="1"><select id="timingUnavailableUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></div></label>
           <label>单次上游请求超时<div class="timing-value"><input id="timingTimeout" type="number" min="1"><select id="timingTimeoutUnit"><option value="1">秒</option><option value="60">分钟</option></select></div></label>
           <label>后台扫描间隔（全局）<div class="timing-value"><input id="timingScan" type="number" min="1"><select id="timingScanUnit"><option value="1">秒</option><option value="60">分钟</option></select></div></label>
         </div>
@@ -131,7 +128,7 @@
         <div class="actions-inline"><button id="saveTiming" class="primary">保存检测时间</button><button id="resetTiming" class="subtle">填入默认时间</button></div>
         <p class="hint" id="timingHelp">隔离复测计时持久化保存在数据库中，服务重启不会重置。时间设置必须通过服务端安全范围校验；每日上游请求预算仍然生效。</p>
       </div>
-      <div class="card small-card"><h2>统一检测策略</h2><p>普通客观题连续 3 次有效错误隔离，指纹题一次可靠不一致立即隔离（3 次采样为 1 轮）；隔离后复测导致隔离的原题，连续 2 次正确恢复。不可判定和请求不可用不计错；所有检测时间可自定义。</p></div>
+      <div class="card small-card"><h2>统一检测策略</h2><p>普通客观题连续 3 次有效错误隔离，指纹题一次可靠不一致立即隔离（3 次采样为 1 轮）；隔离后复测导致隔离的原题，连续 2 次正确恢复。自动检测不可用不计错误次数，但会立即隔离；所有检测时间可自定义。</p></div>
     </section>
   </main>
   <footer>Codex Guard · 独立插件开发版 · 仅管理通过所配置 Gateway Key 的业务流量</footer>

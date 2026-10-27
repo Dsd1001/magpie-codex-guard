@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,7 @@ type QuarantineHold struct {
 	Model              string            `json:"model"`
 	Risk               string            `json:"risk"` // isolated; legacy pending/high/low are migrated
 	Prompt             string            `json:"prompt,omitempty"`
+	Cause              string            `json:"cause,omitempty"` // unavailable | objective_failed
 	Reason             string            `json:"reason"`
 	Since              time.Time         `json:"since"`
 	NextCheckAt        time.Time         `json:"next_check_at"`
@@ -197,11 +199,13 @@ func New(dir, gate string) (*Service, error) {
 			}
 		}
 	}
-	// Retire the legacy standalone fingerprint modes on upgrade. Historical
-	// holds are retained, not re-fingerprinted.
-	if s.state.AutoPromptPolicy.FingerprintMode != FingerprintObjective {
-		s.state.AutoPromptPolicy.FingerprintMode = FingerprintOff
+	// Migrate old fingerprint selection into the ordinary question bank.
+	// Retire legacy modes without changing existing Holds or their deadlines.
+	if s.state.AutoPromptPolicy.Configured && effectiveFingerprintMode(s.state.AutoPromptPolicy.FingerprintMode) == FingerprintObjective &&
+		!slices.Contains(s.state.AutoPromptPolicy.PromptIDs, FingerprintPromptID) {
+		s.state.AutoPromptPolicy.PromptIDs = append(s.state.AutoPromptPolicy.PromptIDs, FingerprintPromptID)
 	}
+	s.state.AutoPromptPolicy.FingerprintMode = FingerprintOff
 	s.fingerprint = NewFingerprintRunner()
 	if err := s.saveLocked(); err != nil {
 		store.Close()

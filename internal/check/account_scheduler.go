@@ -56,7 +56,9 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 			continue
 		}
 		hold, held := s.state.Holds[t.Account]
-		if !allowNewHolds && !held && t.ConsecutiveFails >= 2 {
+		if !allowNewHolds && !held {
+			// An unavailable check now creates an immediate hold, so no
+			// unheld target may run while routing cannot safely isolate.
 			continue
 		}
 		if held && hold.Model != t.Model {

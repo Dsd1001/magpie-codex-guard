@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,8 +25,8 @@ func TestFingerprintObjectiveOptInAndQuestionRotation(t *testing.T) {
 	if p := s.activeAccountPromptsLocked(); len(p) != 1 || p[0].ID != "milk" {
 		t.Fatalf("default question pool changed: %v", p)
 	}
-	if err := s.ConfigureDetectionPrompts([]string{"milk"}, false, FingerprintObjective); err == nil {
-		t.Fatal("fingerprint rotation without rotation enabled was accepted")
+	if err := s.ConfigureDetectionPrompts([]string{"milk", FingerprintPromptID}, false, FingerprintOff); err != nil {
+		t.Fatal("fingerprint is an ordinary selectable question:", err)
 	}
 	if err := s.ConfigureDetectionPrompts(nil, true, FingerprintOnFailure); err == nil {
 		t.Fatal("legacy mode accepted empty objective bank")
@@ -54,8 +55,8 @@ func TestFingerprintObjectiveOptInAndQuestionRotation(t *testing.T) {
 		t.Fatalf("fingerprint-only selection failed: %v", selected)
 	}
 	s.reconcileAutoPromptPolicyLocked()
-	if len(s.state.AutoPromptPolicy.PromptIDs) != 0 {
-		t.Fatal("fingerprint-only mode was replaced with milk")
+	if !slices.Equal(s.state.AutoPromptPolicy.PromptIDs, []string{FingerprintPromptID}) {
+		t.Fatal("fingerprint-only selection must stay in the ordinary prompt list")
 	}
 	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintOff); err != nil {
 		t.Fatal(err)
@@ -171,7 +172,7 @@ func TestFingerprintObjectiveIndeterminateAndIncompleteDoNotCountAsFailure(t *te
 			}
 			s.wg.Wait()
 			target = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-			if target.ConsecutiveFails != 2 || target.State != "unavailable" || len(s.state.Holds) != 0 {
+			if target.ConsecutiveFails != 2 || target.State != PhaseIsolated || s.state.Holds["aaa"].Cause != "unavailable" {
 				t.Fatalf("uncertain fingerprint incorrectly changed state: %+v", target)
 			}
 			final := s.state.AccountResults[len(s.state.AccountResults)-1]
@@ -205,7 +206,7 @@ func TestFingerprintObjectiveUnknownReferenceIsNeutralAndMakesNoCalls(t *testing
 		t.Fatal("unknown reference model should not trigger requests")
 	}
 	target := s.state.AccountTargets[accountTargetID("aaa", model)]
-	if target.ConsecutiveFails != 0 || len(s.state.Holds) != 0 || target.State != "unavailable" {
+	if target.ConsecutiveFails != 0 || s.state.Holds["aaa"].Cause != "unavailable" || target.State != PhaseIsolated {
 		t.Fatalf("missing reference was treated as wrong: %+v", target)
 	}
 	result := s.state.AccountResults[len(s.state.AccountResults)-1]
@@ -238,7 +239,7 @@ func TestFingerprintObjectiveModePersistsAndPreservesExistingHolds(t *testing.T)
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if reopened.AutoPromptSettings().FingerprintMode != FingerprintObjective {
+	if !slices.Contains(reopened.AutoPromptSettings().PromptIDs, FingerprintPromptID) {
 		t.Fatal("mode not persisted")
 	}
 	if reopened.state.Holds["aaa"].Risk != "isolated" {

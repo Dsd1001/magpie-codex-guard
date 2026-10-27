@@ -195,25 +195,26 @@ test('saving the connection reports catalog failure instead of a false success',
  }finally{dom.window.close()}
 });
 
-test('fingerprint as objective is optional; old periodic and risk-specific controls are removed',async()=>{
+test('fingerprint is a normal checkbox beside ordinary questions, without legacy controls',async()=>{
  const {dom,w,calls,state}=fixture();
  try{
   await waitFor(()=>w.document.querySelector('#fingerprintExpected option[value="gpt-6-astra"]'));
-  assert.equal(w.document.querySelector('#fingerprintAutomatic').checked,false);
+  assert.equal(w.document.querySelector('#fingerprintAutomatic'),null);
   assert.equal(w.document.querySelector('#fingerprintMode'),null);
-  assert.deepEqual([...w.document.querySelectorAll('#promptOptions input')].map(x=>x.value),['milk']);
-  const checkbox=w.document.querySelector('#fingerprintAutomatic');
-  checkbox.checked=true;
-  checkbox.dispatchEvent(new w.Event('change'));
-  assert.equal(w.document.querySelector('#rotatePrompts').checked,true);
+  const options=[...w.document.querySelectorAll('#promptOptions input')];
+  assert.deepEqual(options.map(x=>x.value),['model-fingerprint','milk']);
+  assert.equal(options[0].checked,false);
+  assert.equal(options[1].checked,true);
+  options[0].checked=true;
   w.document.querySelector('#saveAutoPrompts').click();
-  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
+  await waitFor(()=>state.state.auto_prompt_policy.prompt_ids.includes('model-fingerprint'));
   const req=JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body);
-  assert.deepEqual(req,{prompt_ids:['milk'],rotate:true,fingerprint_mode:'objective_rotation'});
-  assert.match(w.document.querySelector('#rules .fingerprint-policy .hint').textContent,/一次判分/);
-  checkbox.checked=false;
+  assert.deepEqual(req,{prompt_ids:['model-fingerprint','milk'],rotate:true});
+  assert.match(w.document.querySelector('#rules .hint').textContent,/3 次/);
+  await waitFor(()=>w.document.querySelector('#notice').textContent==='操作已完成');
+  options[0].checked=false;
   w.document.querySelector('#saveAutoPrompts').click();
-  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='off');
+  await waitFor(()=>state.state.auto_prompt_policy.prompt_ids.length===1);
   await new Promise(resolve=>setTimeout(resolve,85));
  }finally{dom.window.close()}
 });
@@ -305,25 +306,21 @@ test('roster sync and explicitly approved production allowlist never send raw cr
  }finally{dom.window.close()}
 });
 
-test('fingerprint-only question mode is permitted, while mixed unrotated mode is refused',async()=>{
+test('fingerprint-only selection works without any special mode',async()=>{
  const {dom,w,calls,state}=fixture();
  try {
-  await waitFor(()=>w.document.querySelector('#promptOptions input[value="milk"]'));
+  await waitFor(()=>w.document.querySelector('#promptOptions input[value="model-fingerprint"]'));
   w.document.querySelector('[data-tab="rules"]').click();
-  const checkbox=w.document.querySelector('#fingerprintAutomatic');
-  checkbox.checked=true;
-  checkbox.dispatchEvent(new w.Event('change'));
-  const rotate=w.document.querySelector('#rotatePrompts');
-  rotate.checked=false;
-  const save=w.document.querySelector('#saveAutoPrompts');
-  const before=calls.filter(c=>c.path==='/api/auto-prompts').length;
-  save.click();
-  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('请勾选按轮次顺序轮换'));
-  assert.equal(calls.filter(c=>c.path==='/api/auto-prompts').length,before);
-  for(const el of w.document.querySelectorAll('#promptOptions input'))el.checked=false;
-  save.click();
-  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
-  assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body).prompt_ids,[]);
+  const fp=w.document.querySelector('#promptOptions input[value="model-fingerprint"]');
+  const milk=w.document.querySelector('#promptOptions input[value="milk"]');
+  fp.checked=true;
+  milk.checked=false;
+  w.document.querySelector('#rotatePrompts').checked=false;
+  w.document.querySelector('#saveAutoPrompts').click();
+  await waitFor(()=>state.state.auto_prompt_policy.prompt_ids.length===1);
+  const body=JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body);
+  assert.deepEqual(body,{prompt_ids:['model-fingerprint'],rotate:false});
+  assert.equal(w.document.querySelector('#fingerprintAutomatic'),null);
   await new Promise(resolve=>setTimeout(resolve,85));
  }finally{dom.window.close()}
 });

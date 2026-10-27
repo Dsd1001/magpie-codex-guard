@@ -21,8 +21,8 @@ guard console and SQLite state contain stable identities only.
 3. In the guard console, add the enrolled API account with its qualified model,
    such as `example/gpt-6.1-sol`. If the model maps to the local fingerprint
    library, automatic fingerprint scoring works without a separate saved
-   expected-model setting. Unknown aliases remain neutral until explicitly
-   mapped via the advanced reference override.
+   expected-model setting. Unknown aliases yield an unavailable automatic check, which triggers an
+   isolation until the reference mapping is corrected and recovery succeeds.
 
 The stable monitoring ID incorporates the provider and key fingerprint. Probes
 resolve Magpie's native routing trace ID: `provider` for one active key, or
@@ -39,7 +39,8 @@ explicit enrollment and a new monitoring target.
   review or high/low risk classification runs.
 - Other objective questions require three wrong answers to the same question
   before isolation. Inconclusive results and transport failures, including
-  HTTP 429, do not count as quality failures.
+  HTTP 429, immediately isolate as unavailable (without incrementing the
+  wrong-answer counter); use the configurable unavailable retry schedule.
 - Recovery uses the same question twice, with a customizable confirmation
   interval. The first and subsequent quarantine retests have independently
   configurable intervals (default 6 hours, then 24 hours).
@@ -78,5 +79,5 @@ tests cover single, multiple, disabled and duplicate saved keys.
 Build and install a package containing the updated helper with
 `npm run build:release`. A source-only `github:` installation at alpha.21 pins the immutable,
 verified alpha.20 backend including unified quarantine and custom timings.
-The alpha.21 complete Release package includes the freshly built Go helper.
+The alpha.22 complete Release package includes the updated Go helper (source-only installation will be repinned after immutable release verification).
 Both installation paths retain SHA-256 integrity checks.
