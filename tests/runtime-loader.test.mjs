@@ -32,7 +32,7 @@ test('a corrupted download never becomes an executable', async () => {
       }),
       /SHA-256 校验失败/,
     );
-    const runtime = path.join(dataDir, 'runtime', 'v0.1.0-alpha.24');
+    const runtime = path.join(dataDir, 'runtime', 'v0.1.0-alpha.26');
     assert.deepEqual(await readdir(runtime), []);
   } finally {
     await rm(root, { recursive: true, force: true });

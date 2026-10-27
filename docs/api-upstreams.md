@@ -88,9 +88,8 @@ tests cover single, multiple, disabled and duplicate saved keys.
 ## Packaging
 
 Build and install a package containing the updated helper with
-`npm run build:release`. The alpha.26 Release package includes the new
-64-model fingerprint bank and the corrected upstream sequence-shape scorer.
-A source-only `github:` installation is temporarily pinned to the verified
-alpha.24 backend until the alpha.26 artifact is published and verified; the
-next installer release will pin alpha.26. Both installation forms preserve
-existing monitor settings and require SHA-256 checks on downloadable assets.
+`npm run build:release`. In alpha.27, source-only `github:` installations pin
+SHA-256-verified alpha.26 backend assets containing the 64-model 2026-10-27
+fingerprint library and updated sequence-shape scorer. The alpha.27 Release
+package bundles the current helper. Both installation forms preserve existing
+monitor settings and verify downloaded assets.

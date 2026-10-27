@@ -147,13 +147,13 @@ flowchart TD
 
 ## 安装包与版本
 
-当前开发版：**`v0.1.0-alpha.26`**（内置指纹库更新至 2026-10-27，支持 64 个模型；同步上游评分器）。完整 Release 包包含新版后端；GitHub 源码安装器需在发布并核验此版本后再更新固定校验。
+当前开发版：**`v0.1.0-alpha.27`**（指纹库更新至 2026-10-27，支持 64 个模型；同步上游评分器，并修复 GitHub 源码安装器的后端版本固定值）。GitHub 安装与完整 Release 包都包含新版检测能力。
 
 [GitHub Releases](https://github.com/Dsd1001/magpie-codex-guard/releases) · [详细架构](docs/architecture.md)
 
 Magpie 使用 `github:Dsd1001/magpie-codex-guard` 源码安装时，插件会从已发布的 Release 获取所需 Go 二进制，使用**固定 SHA-256** 校验安装包及可执行文件；完整 Release 包则优先使用内置二进制。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，首次下载安装需要访问 GitHub Release 并具备 `tar`。
 
-**安装器版本说明：** 本次 alpha.26 完整 Release 将内置新版 Go 后端与 64 模型指纹库；直接从 GitHub 源码安装的运行时仍暂时固定到经过验证的 alpha.24 后端。为了保持 SHA-256 固定校验，只有在 alpha.26 资产正式发布且完整性验证通过后，才会更新源码安装器到新版后端。升级不会重置旧检测题库或隔离状态。
+**安装器版本说明：** alpha.27 的 GitHub 源码安装器固定下载已发布、经 SHA-256 校验的 `v0.1.0-alpha.26` Go 后端；alpha.27 完整 Release 包则内置最新版后端。两种安装方式都使用 2026-10-27 的 64 模型指纹库及新序列评分规则。升级不会重置已有题库、隔离状态或检测时间。
 
 远程管理可使用插件提供的临时 Cloudflare Quick Tunnel，生成一次性 HTTPS 管理链接；无需自行配置 Cloudflare DNS。管理链接应视同管理员凭证，不要公开分享。
 

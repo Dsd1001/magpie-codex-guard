@@ -71,4 +71,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.26: update embedded lm-detector fingerprint bank to 64 models (2026-10-27) and sync upstream sequence-shape scoring; new golden parity fixtures, immutable upstream SHA-256 checks and preserved isolation/timing state."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.27: GitHub source installer now pins immutable SHA-256-verified alpha.26 helper with 64-model 2026-10-27 fingerprint bank and updated upstream sequence filter; prior route and timing state preserved."
