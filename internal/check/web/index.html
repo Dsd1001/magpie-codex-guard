@@ -47,11 +47,11 @@
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
     <section id="rules" class="page" hidden>
-      <div class="section-head"><div><h1>检测题库</h1><p>普通客观题、自定义题连续 3 次有效错误直接隔离；指纹题完成 3 次采样后，只要一次可靠判定不一致就立即隔离。无额外指纹复核。</p></div></div>
+      <div class="section-head"><div><h1>检测题库</h1><p>全新安装默认通过模型指纹检测结果判断降智；旧安装保留已有题库。指纹题一轮 3 次采样、可靠不一致立即隔离，没有额外指纹复核。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
         <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题</label>
-        <p class="hint">模型指纹与牛奶题、糖果题并列选择，不再存在额外的指纹复核。指纹题一轮 3 次采样，可靠不一致立即隔离；普通题同题连续 3 次错误隔离。自动检测不可用也会隔离，直至原题连续 2 次有效通过。</p>
+        <p class="hint">全新安装默认选中模型指纹题来判断降智；模型指纹与牛奶题及自定义题并列选择，没有额外指纹复核。指纹题一轮 3 次采样，可靠不一致立即隔离；普通题同题连续 3 次错误隔离。自动检测不可用也会隔离，直至原题连续 2 次有效通过。</p>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
       </div>
       <div class="card form-card">

@@ -26,6 +26,17 @@ func OpenStore(path string) (*Store, error) {
 	}
 	return &Store{db}, nil
 }
+
+// HasState distinguishes a new installation from an upgraded installation.
+// Existing stored question selections must never be silently replaced.
+func (s *Store) HasState() (bool, error) {
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM state WHERE id=1").Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (s *Store) Load(v *State) error {
 	var b []byte
 	err := s.db.QueryRow("SELECT body FROM state WHERE id=1").Scan(&b)

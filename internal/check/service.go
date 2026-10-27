@@ -128,12 +128,26 @@ func New(dir, gate string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	storedState, err := store.HasState()
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
 	s := &Service{dir: dir, gate: gate, store: store, running: map[string]bool{}, scheduleWake: make(chan struct{}, 1)}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.state = State{Config: Config{DailyLimit: 600}, TimingPolicy: DefaultTimingPolicy(), AccountTargets: map[string]*AccountTarget{}, AccountResults: []AccountResult{}, Holds: map[string]QuarantineHold{}, Alias: Secret(), Spent: map[string]int{}}
 	if err := store.Load(&s.state); err != nil {
 		store.Close()
 		return nil, err
+	}
+	if !storedState {
+		// New installations select fingerprint as the default intelligence
+		// downgrade signal. Scheduling and production routing remain opt-in.
+		// Existing installations keep their saved question bank untouched.
+		s.state.AutoPromptPolicy = AutoPromptPolicy{
+			Configured: true, Rotate: true,
+			PromptIDs: []string{FingerprintPromptID}, FingerprintMode: FingerprintOff,
+		}
 	}
 	if s.state.AccountTargets == nil {
 		s.state.AccountTargets = map[string]*AccountTarget{}

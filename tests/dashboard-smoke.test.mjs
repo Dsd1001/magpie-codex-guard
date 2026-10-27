@@ -6,7 +6,7 @@ import {JSDOM} from 'jsdom';
 const html=await readFile(new URL('../internal/check/web/index.html',import.meta.url),'utf8');
 const js=await readFile(new URL('../internal/check/web/assets/app.js',import.meta.url),'utf8');
 
-function fixture({modelsError='',apiUpstream=false}={}){
+function fixture({modelsError='',apiUpstream=false,freshFingerprint=false}={}){
  const calls=[];
  const state={
   state:{
@@ -15,7 +15,9 @@ function fixture({modelsError='',apiUpstream=false}={}){
    holds:{},
    account_targets:{},
    account_results:[],
-   auto_prompt_policy:{configured:false,rotate:true,prompt_ids:['milk'],fingerprint_mode:'off'},
+   auto_prompt_policy:freshFingerprint
+    ?{configured:true,rotate:true,prompt_ids:['model-fingerprint'],fingerprint_mode:'off'}
+    :{configured:false,rotate:true,prompt_ids:['milk'],fingerprint_mode:'off'},
    timing_policy:{
     normal_seconds:1800,suspect_seconds:120,quarantine_first_seconds:21600,
     quarantine_repeat_seconds:86400,recovery_seconds:120,unavailable_seconds:1800,
@@ -192,6 +194,17 @@ test('saving the connection reports catalog failure instead of a false success',
   assert.equal(w.document.querySelector('#gatewayKey').value,'');
   assert.ok(calls.some(c=>c.path==='/api/config'&&c.options.method==='POST'));
   assert.doesNotMatch(w.document.querySelector('#notice').textContent,/操作已完成/);
+ }finally{dom.window.close()}
+});
+
+test('new install defaults to fingerprint while routing and scheduling stay disabled',async()=>{
+ const {dom,w,state}=fixture({freshFingerprint:true});
+ try{
+  await waitFor(()=>w.document.querySelector('#promptOptions input[value="model-fingerprint"]'));
+  assert.equal(w.document.querySelector('#promptOptions input[value="model-fingerprint"]').checked,true);
+  assert.equal(w.document.querySelector('#promptOptions input[value="milk"]').checked,false);
+  assert.equal(state.state.route.schedule_enabled,false);
+  assert.equal(state.state.route.auto_apply,false);
  }finally{dom.window.close()}
 });
 

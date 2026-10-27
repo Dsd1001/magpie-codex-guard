@@ -30,6 +30,15 @@ resolve Magpie's native routing trace ID: `provider` for one active key, or
 discovery fails rather than silently testing a replacement. A rotated key needs
 explicit enrollment and a new monitoring target.
 
+## Default question selection
+
+On a brand-new Guard database the default automatic question is the three-sample
+model fingerprint objective. Existing installations retain their saved question
+selection. Schedules and production routing modifications remain opt-in.
+Providers/models not covered by the local reference bank must be mapped before
+enabling fingerprint-based production quarantine; otherwise the automatic check
+is unavailable and quarantines conservatively.
+
 ## Isolation and recovery
 
 - Healthy targets default to one check every 30 minutes; intervals and

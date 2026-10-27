@@ -22,8 +22,8 @@ func (incompleteFingerprint) Evaluate(_ []fingerprint.Output, _ string) Fingerpr
 func TestFingerprintObjectiveOptInAndQuestionRotation(t *testing.T) {
 	s, _, close := fingerprintBankFixture(t)
 	defer close()
-	if p := s.activeAccountPromptsLocked(); len(p) != 1 || p[0].ID != "milk" {
-		t.Fatalf("default question pool changed: %v", p)
+	if p := s.activeAccountPromptsLocked(); len(p) != 1 || p[0].ID != FingerprintPromptID {
+		t.Fatalf("fresh installs must default to fingerprint detection: %v", p)
 	}
 	if err := s.ConfigureDetectionPrompts([]string{"milk", FingerprintPromptID}, false, FingerprintOff); err != nil {
 		t.Fatal("fingerprint is an ordinary selectable question:", err)
