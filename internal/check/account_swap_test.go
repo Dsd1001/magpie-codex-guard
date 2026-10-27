@@ -182,8 +182,8 @@ func TestAccountRosterSyncKeepsTombstoneAndEnrollsReplacementOptIn(t *testing.T)
 	if !reloaded.state.Route.AutoSyncAccounts || !reloaded.state.AccountTargets[accountTargetID(departedID, "codex/gpt-6.1-sol")].Missing {
 		t.Fatal("auto-sync mode or tombstone did not survive restart")
 	}
-	if reloaded.state.Holds[departedID].Risk != "high" {
-		t.Fatal("persistent high risk hold disappeared")
+	if reloaded.state.Holds[departedID].Risk != "isolated" {
+		t.Fatal("legacy hold must persist and migrate to unified isolation")
 	}
 }
 

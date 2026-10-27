@@ -535,6 +535,18 @@ func canonicalExpected(raw string) string {
 		return s
 	}
 }
+
+// ResolveExpected maps a Magpie qualified model name to a known local
+// reference ID. An unsupported alias is never treated as a mismatch.
+func (d *Detector) ResolveExpected(model string) (string, bool) {
+	id := canonicalExpected(model)
+	for _, candidate := range d.artifact.ModelIDs {
+		if candidate == id {
+			return id, true
+		}
+	}
+	return "", false
+}
 func (d *Detector) Analyze(outputs []Output, expectedModel string) (Analysis, error) {
 	result := Analysis{Decision: "indeterminate", Expected: canonicalExpected(expectedModel), Version: d.Version()}
 	if len(outputs) != 3 {

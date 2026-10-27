@@ -147,6 +147,23 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		}
 		writeJSON(w, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("POST /api/timing", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Policy     TimingPolicy `json:"policy"`
+			Account    string       `json:"account"`
+			Model      string       `json:"model"`
+			Inherit    bool         `json:"inherit"`
+			Reschedule bool         `json:"reschedule"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if err := s.ConfigureTimingPolicy(input.Policy, input.Account, input.Model, input.Inherit, input.Reschedule); err != nil {
+			apiError(w, err, http.StatusConflict)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("POST /api/account-target", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Account, Model string

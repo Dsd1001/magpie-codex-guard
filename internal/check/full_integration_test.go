@@ -109,18 +109,18 @@ func TestObjectiveFingerprintIsolationAndRecoveryIntegration(t *testing.T) {
 		}
 		s.wg.Wait()
 	}
-	if calls := fake.call.Load(); calls != 1 {
-		t.Fatalf("fingerprint called %d times, want once", calls)
+	if calls := fake.call.Load(); calls != 0 {
+		t.Fatalf("post-failure fingerprint review must never run, got %d", calls)
 	}
-	if got := total.Load(); got != 6 {
-		t.Fatalf("expected 3+3 upstream requests, got %d", got)
+	if got := total.Load(); got != 3 {
+		t.Fatalf("ordinary objective should only send three requests, got %d", got)
 	}
 	hold, exists := s.state.Holds["aaa"]
-	if !exists || hold.Risk != "high" {
-		t.Fatalf("missing high-risk hold: %+v", hold)
+	if !exists || hold.Risk != "isolated" || hold.Prompt != "milk" {
+		t.Fatalf("missing unified hold: %+v", hold)
 	}
-	if time.Until(hold.NextCheckAt) < 47*time.Hour {
-		t.Fatalf("high-risk schedule %s", hold.NextCheckAt)
+	if until := time.Until(hold.NextCheckAt); until < 5*time.Hour || until > 7*time.Hour {
+		t.Fatalf("first unified retry must be 6h: %+v", hold)
 	}
 	assertKeyScopes := func(expected []string) {
 		t.Helper()
@@ -177,7 +177,7 @@ func TestObjectiveFingerprintIsolationAndRecoveryIntegration(t *testing.T) {
 	if s.state.Route.Quarantined["aaa"] {
 		t.Fatal("production routing not restored")
 	}
-	if got := total.Load(); got != 8 {
+	if got := total.Load(); got != 5 {
 		t.Fatalf("unexpected number of upstream calls: %d", got)
 	}
 	s.Close()

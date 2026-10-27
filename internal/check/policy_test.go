@@ -5,70 +5,89 @@ import (
 	"time"
 )
 
-func TestObjectiveSuspectToFingerprint(t *testing.T) {
-	start := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+func TestOrdinaryObjectiveRequiresThreeWrongAnswersOnSameQuestion(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol", Enabled: true}
-	for i := 1; i <= 3; i++ {
-		now := start.Add(time.Duration(i-1) * SuspectInterval)
-		yes, _ := objectiveTransition(target, nil, "failed", "milk", now)
-		if (i == 3) != yes {
-			t.Fatalf("at %d expected fingerprint? %v", i, yes)
+	for n := 1; n <= 3; n++ {
+		create, _ := objectiveTransition(target, nil, "failed", "milk", now)
+		if create != (n == 3) {
+			t.Fatalf("wrong threshold for ordinary objective n=%d", n)
 		}
-		if i < 3 && !target.NextCheckAt.Equal(now.Add(SuspectInterval)) {
-			t.Fatal("suspect time incorrect")
+		if n < 3 && !target.NextCheckAt.Equal(now.Add(SuspectInterval)) {
+			t.Fatalf("unexpected retry time for n=%d", n)
 		}
+		now = now.Add(SuspectInterval)
 	}
-	if target.State != PhaseFingerprint {
-		t.Fatal(target.State)
+	if target.State != PhaseIsolated || target.ConsecutiveFails != 3 {
+		t.Fatalf("ordinary objective not isolated on third error: %+v", target)
+	}
+	hold := startHold(*target, now)
+	if hold.Risk != "isolated" || hold.Prompt != "milk" || !hold.NextCheckAt.Equal(now.Add(6*time.Hour)) {
+		t.Fatalf("incorrect unified hold: %+v", hold)
 	}
 }
-func TestRisk48And6Then24(t *testing.T) {
-	start := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		verdict, risk   string
-		initial, repeat time.Duration
-	}{
-		{"mismatch", "high", 48 * time.Hour, 48 * time.Hour},
-		{"match", "low", 6 * time.Hour, 24 * time.Hour},
-		{"indeterminate", "low", 6 * time.Hour, 24 * time.Hour},
-	} {
-		t.Run(tc.verdict, func(t *testing.T) {
-			target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
-			hold := startHold(*target, start)
-			classifyHold(&hold, FingerprintReport{Verdict: tc.verdict}, start)
-			if hold.Risk != tc.risk || !hold.NextCheckAt.Equal(start.Add(tc.initial)) {
-				t.Fatalf("first hold %+v", hold)
-			}
-			first := hold.NextCheckAt
-			_, release := objectiveTransition(target, &hold, "failed", "milk", first)
-			if release || !hold.NextCheckAt.Equal(first.Add(tc.repeat)) {
-				t.Fatalf("next hold %+v", hold)
-			}
-		})
+
+func TestDifferentObjectivePromptDoesNotAccumulateFailures(t *testing.T) {
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
+	now := time.Now()
+	objectiveTransition(target, nil, "failed", "milk", now)
+	objectiveTransition(target, nil, "failed", "custom-1", now)
+	if target.ConsecutiveFails != 1 || target.LastAutoPrompt != "custom-1" {
+		t.Fatalf("wrong questions combined in one fail streak: %+v", target)
 	}
 }
-func TestRecoveryRequiresTwoAndNotAffectedByUnavailable(t *testing.T) {
-	start := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
-	tgt := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
-	hold := startHold(*tgt, start)
-	classifyHold(&hold, FingerprintReport{Verdict: "mismatch"}, start)
-	_, release := objectiveTransition(tgt, &hold, "passed", "milk", start.Add(48*time.Hour))
-	if release || hold.ConfirmationPasses != 1 || !tgt.NextCheckAt.Equal(start.Add(48*time.Hour+SuspectInterval)) {
-		t.Fatal("not in confirmation phase")
+
+func TestFingerprintOneCompleteMismatchImmediatelyIsolates(t *testing.T) {
+	now := time.Now()
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
+	create, release := objectiveTransition(target, nil, "failed", FingerprintPromptID, now)
+	if !create || release || target.State != PhaseIsolated || target.ConsecutiveFails != 1 {
+		t.Fatalf("fingerprint mismatch did not isolate on one scored turn: %+v", target)
 	}
-	_, release = objectiveTransition(tgt, &hold, "unavailable", "milk", tgt.NextCheckAt)
-	if release || hold.ConfirmationPasses != 1 {
-		t.Fatal("unavailable must be neutral")
+	hold := startHold(*target, now)
+	if hold.Prompt != FingerprintPromptID || hold.Risk != "isolated" {
+		t.Fatalf("fingerprint hold incorrect: %+v", hold)
 	}
-	_, release = objectiveTransition(tgt, &hold, "passed", "milk", tgt.NextCheckAt)
+}
+
+func TestUnifiedQuarantineFirstSixThenTwentyFour(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol", LastAutoPrompt: "milk"}
+	hold := startHold(*target, now)
+	if !hold.NextCheckAt.Equal(now.Add(6 * time.Hour)) {
+		t.Fatal("initial unified quarantine not six hours")
+	}
+	next := hold.NextCheckAt
+	_, release := objectiveTransition(target, &hold, "failed", "milk", next)
+	if release || !hold.NextCheckAt.Equal(next.Add(24*time.Hour)) {
+		t.Fatalf("repeat unified quarantine not 24 hours: %+v", hold)
+	}
+}
+
+func TestRecoveryRequiresTwoValidPassesAndNeutralIsUnchanged(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
+	hold := startHold(*target, now)
+	first := hold.NextCheckAt
+	_, release := objectiveTransition(target, &hold, "passed", "milk", first)
+	if release || hold.ConfirmationPasses != 1 || !target.NextCheckAt.Equal(first.Add(SuspectInterval)) {
+		t.Fatal("first pass was not confirmation stage")
+	}
+	_, release = objectiveTransition(target, &hold, "unavailable", "milk", target.NextCheckAt)
+	if release || hold.ConfirmationPasses != 1 || !target.NextCheckAt.Equal(first.Add(SuspectInterval+UnavailableInterval)) {
+		t.Fatal("unavailable must remain neutral and apply retry policy")
+	}
+	_, release = objectiveTransition(target, &hold, "passed", "milk", target.NextCheckAt)
 	if !release {
 		t.Fatal("second valid pass must recover")
 	}
 }
-func TestIndeterminateNeverHigh(t *testing.T) {
-	var hold = QuarantineHold{Risk: "pending"}
-	classifyHold(&hold, FingerprintReport{Verdict: "indeterminate", Diagnostic: "timeout"}, time.Now())
-	if hold.Risk != "low" {
-		t.Fatalf("got %s", hold.Risk)
+
+func TestIndeterminateFingerprintDoesNotCreateHold(t *testing.T) {
+	if got := fingerprintAsObjectiveVerdict(FingerprintReport{Verdict: "indeterminate", UsedOutputs: 3}, "gpt-6-astra"); got != "unavailable" {
+		t.Fatal("indeterminate fingerprint must be neutral")
+	}
+	if got := fingerprintAsObjectiveVerdict(FingerprintReport{Verdict: "mismatch", UsedOutputs: 2}, "gpt-6-astra"); got != "unavailable" {
+		t.Fatal("partial fingerprint batch must be neutral")
 	}
 }

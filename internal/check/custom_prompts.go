@@ -93,7 +93,7 @@ func (s *Service) findPromptLocked(id string) (Prompt, bool) {
 	for _, p := range s.state.CustomPrompts {
 		if p.ID == id {
 			p.Custom = true
-            p.Kind = "objective"
+			p.Kind = "objective"
 			p.Automatic = validAutomaticCustom(p)
 			return p, true
 		}
@@ -105,7 +105,7 @@ func (s *Service) promptCatalogLocked() []Prompt {
 	list := append([]Prompt{}, Prompts...)
 	for _, p := range s.state.CustomPrompts {
 		p.Custom = true
-        p.Kind = "objective"
+		p.Kind = "objective"
 		p.Automatic = validAutomaticCustom(p)
 		list = append(list, p)
 	}
@@ -194,6 +194,13 @@ func (s *Service) UpdateCustomPrompt(id, name, promptText, guidance string, auto
 		}
 		rubricChanged := before.Text != updated.Text || before.Automatic != updated.Automatic ||
 			!slices.Equal(before.ExpectedAnswers, updated.ExpectedAnswers)
+		if rubricChanged {
+			for _, hold := range s.state.Holds {
+				if hold.Prompt == id {
+					return errors.New("该题目正用于隔离恢复，解除隔离之前不能修改判分规则")
+				}
+			}
+		}
 		previousSelection := s.state.AutoPromptPolicy
 		s.state.CustomPrompts[i] = updated
 		var targets map[string]AccountTarget
@@ -221,6 +228,11 @@ func (s *Service) DeleteCustomPrompt(id string) error {
 	for i, p := range s.state.CustomPrompts {
 		if p.ID != id {
 			continue
+		}
+		for _, hold := range s.state.Holds {
+			if hold.Prompt == id {
+				return errors.New("该题目正用于隔离恢复，解除隔离之前不能删除")
+			}
 		}
 		before := append([]Prompt{}, s.state.CustomPrompts...)
 		previousSelection := s.state.AutoPromptPolicy

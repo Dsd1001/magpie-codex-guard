@@ -9,12 +9,12 @@ let fingerprintModelsError='';
 const stateLabels={
  passed:['正常','ok'], suspect:['疑似异常','low'], checking:['检测中','pending'],
  unverified:['待检测','pending'], unavailable:['不可用','pending'],
- fingerprint_pending:['指纹复核中','pending'], quarantined_high:['高风险隔离','high'],
- quarantined_low:['低风险隔离','low'], recovery_confirm:['恢复确认','low']
+ fingerprint_pending:['历史待复核','pending'], quarantined_high:['已隔离','high'],
+ quarantined_low:['已隔离','high'], quarantined:['已隔离','high'], recovery_confirm:['恢复确认','low']
 };
 function labelFor(t,hold){
  if(hold){
-  const x=hold.risk==='high'?['高风险隔离','high']:hold.risk==='low'?['低风险隔离','low']:['待指纹复核','pending'];
+  const x=['已隔离','high'];
   return `<span class="pill ${x[1]}">${x[0]}</span>`;
  }
  const x=stateLabels[t.state]||['未检测','pending'];
@@ -74,7 +74,7 @@ function renderSummary(){
  const ids=[...new Set(targets.map(t=>t.account))];
  $('statAccounts').textContent=String(ids.length);
  $('statIsolated').textContent=String(Object.keys(held).length);
- $('statPending').textContent=String(Object.values(held).filter(h=>h.risk==='pending').length);
+ $('statPending').textContent=String(ids.filter(id=>!held[id]&&targets.some(t=>t.account===id&&t.state==='suspect')).length);
  $('statHealthy').textContent=String(ids.filter(id=>!held[id]&&targets.some(t=>t.account===id&&t.state==='passed')).length);
  const active=s.route?.auto_apply;
  $('liveStatus').textContent=s.route?.pending?'路由事务待确认':s.route?.last_error?'路由同步异常':active?'自动隔离已启用':'仅观察 · 未修改生产路由';
@@ -114,8 +114,8 @@ function renderAccounts(){
   const model=elem('td','mono',t.model);
   const st=elem('td');
   // Only static markup is injected. Account/user content is always textContent.
-  const label=elem('span',`pill ${(hold?.risk==='high'?'high':hold?.risk==='low'||t.state==='suspect'?'low':t.state==='passed'&&!hold?'ok':'pending')}`,
-   hold?(hold.risk==='high'?'高风险隔离':hold.risk==='low'?'低风险隔离':'指纹复核中'):(stateLabels[t.state]?.[0]||t.state));
+  const label=elem('span',`pill ${(hold?'high':t.state==='suspect'?'low':t.state==='passed'?'ok':'pending')}`,
+   hold?'已隔离':(stateLabels[t.state]?.[0]||t.state));
   st.append(label);
   if(missing)st.append(elem('div','hint','账号已删除 · 停止检测 · 隔离留档保留'));
   if(hold&&s.route?.auto_apply&&!s.route?.quarantined?.[t.account]){
@@ -155,10 +155,7 @@ function renderRules(){
   opts.append(l);
  }
  $('rotatePrompts').checked=Boolean(policy.rotate||!policy.configured);
- const mode=policy.fingerprint_mode||'after_failures';
- $('fingerprintAutomatic').checked=mode!=='off';
- $('fingerprintMode').value=['after_failures','periodic_24h','objective_rotation'].includes(mode)?mode:'after_failures';
- $('fingerprintMode').disabled=mode==='off';
+ $('fingerprintAutomatic').checked=policy.fingerprint_mode==='objective_rotation';
  const list=$('customList');list.replaceChildren();
  for(const p of (s.custom_prompts||[])){
   const wrap=elem('div','sub-row');
@@ -196,14 +193,14 @@ function renderManual(){
 }
 function updateFingerprintExpected(){
  const t=chosenManualTarget();
- option($('fingerprintExpected'),fingerprintModels.map(m=>[m.id,m.name||m.id]),'自动匹配当前 Codex 模型');
+ option($('fingerprintExpected'),fingerprintModels.map(m=>[m.id,m.name||m.id]),'自动匹配当前检测模型');
  const desired=t?.fingerprint_expected||'';
  if(desired&&fingerprintModels.some(m=>m.id===desired))$('fingerprintExpected').value=desired;
  else if(!desired)$('fingerprintExpected').value='';
  $('fingerprintExpectation').hidden=$('manualPrompt').value!=='model-fingerprint';
  $('fingerprintModelHelp').textContent=fingerprintModelsError?
   '参考模型加载失败：'+fingerprintModelsError:
-  '参考库提供 '+fingerprintModels.length+' 个候选模型。手动及周期检测可自动匹配；作为自动客观题参与轮换时，必须先明确保存该账号的预期参考模型。';
+  '默认从当前检测模型自动匹配参考类别；仅无法匹配时才需要高级覆盖。参考库包含 '+fingerprintModels.length+' 个模型。';
 }
 async function loadFingerprintModels(){
  try{
@@ -234,7 +231,7 @@ function renderHistory(){
   const sum=elem('summary');
   sum.append(elem('span','mono muted',stamp(r.time)),elem('strong','',email(r.account)),elem('span','muted',r.prompt_name||r.prompt));
   const verdict=elem('span',`pill ${r.verdict==='high'||r.verdict==='failed'?'high':r.verdict==='passed'?'ok':r.verdict==='low'?'low':'pending'}`,
-   ({passed:'通过',failed:'错误',unavailable:'不可用',high:'高风险',low:'低风险',manual:'人工评价',sampled:'已采样（未判分）',match:'指纹一致',mismatch:'指纹不一致',indeterminate:'指纹不可判'})[r.verdict]||r.verdict);
+   ({passed:'通过',failed:'错误',unavailable:'不可用',high:'历史高风险',low:'历史低风险',isolated:'已隔离',manual:'人工评价',sampled:'已采样（未判分）',match:'指纹一致',mismatch:'指纹不一致',indeterminate:'指纹不可判'})[r.verdict]||r.verdict);
   sum.append(verdict);
   details.append(sum);
   if(r.error)details.append(elem('p','hint',r.error));
@@ -249,6 +246,69 @@ function renderHistory(){
   root.append(details);
  }
 }
+const timingFields=[
+ ['normal_seconds','timingNormal'],
+ ['suspect_seconds','timingSuspect'],
+ ['quarantine_first_seconds','timingFirst'],
+ ['quarantine_repeat_seconds','timingRepeat'],
+ ['recovery_seconds','timingRecovery'],
+ ['unavailable_seconds','timingUnavailable'],
+ ['request_timeout_seconds','timingTimeout'],
+ ['scan_seconds','timingScan']
+];
+const defaultTimings={
+ normal_seconds:1800,suspect_seconds:120,quarantine_first_seconds:21600,
+ quarantine_repeat_seconds:86400,recovery_seconds:120,unavailable_seconds:1800,
+ request_timeout_seconds:180,scan_seconds:60
+};
+let timingDirty=false;
+function setTimingValues(policy){
+ for(const [field,id] of timingFields){
+  const seconds=Number(policy?.[field]||defaultTimings[field]);
+  const options=[...$(id+'Unit').options].map(o=>Number(o.value));
+  const unit=options.find(u=>Number.isInteger(seconds/u))||1;
+  $(id+'Unit').value=String(unit);
+  $(id).value=String(seconds/unit);
+ }
+}
+function getTimingValues(){
+ const result={};
+ for(const [field,id] of timingFields){
+  const amount=Number($(id).value);
+  const unit=Number($(id+'Unit').value);
+  const value=amount*unit;
+  if(!Number.isFinite(value)||!Number.isInteger(value)||value<=0)throw Error('检测时间必须是大于 0 的整数秒：'+id);
+  result[field]=value;
+ }
+ return result;
+}
+function toggleTimingControls(){
+ const target=Boolean($('timingScope').value);
+ const inherited=target&&$('timingInherit').checked;
+ $('timingInherit').disabled=!target;
+ for(const [field,id] of timingFields){
+  const disabled=inherited||(target&&field==='scan_seconds');
+  $(id).disabled=disabled;
+  $(id+'Unit').disabled=disabled;
+ }
+ $('resetTiming').disabled=inherited;
+}
+function renderTiming(force=false){
+ const state=current?.state||{};
+ const entries=Object.entries(state.account_targets||{});
+ option($('timingScope'),entries.map(([id,t])=>[id,email(t.account)+' · '+t.model]),'全局默认（全部监测目标继承）');
+ if(timingDirty&&!force)return;
+ const key=$('timingScope').value;
+ const target=key?(state.account_targets||{})[key]:null;
+ const inherit=Boolean(target&&!target.timing_override);
+ $('timingInherit').checked=inherit;
+ setTimingValues(target?.timing_override||state.timing_policy||defaultTimings);
+ $('timingHelp').textContent=target?
+  '当前监测目标可以覆盖全局时间；调度扫描间隔始终由全局控制。保存默认保留已安排的隔离与检测时间。':
+  '全局时间适用于全部继承默认值的目标。保存默认不修改现有检测任务时间。';
+ toggleTimingControls();
+}
+
 function renderSettings(){
  const s=current.state;
  if(document.activeElement!==$('autoSyncAccountRoster'))$('autoSyncAccountRoster').checked=Boolean(s.route?.auto_sync_accounts);
@@ -258,6 +318,7 @@ function renderSettings(){
  if(document.activeElement!==$('probeKey') && s.route?.probe_key_id)$('probeKey').value=s.route.probe_key_id;
  $('enableSchedule').checked=Boolean(s.route?.schedule_enabled);
  $('enableRouting').checked=Boolean(s.route?.auto_apply);
+ renderTiming();
 }
 async function refresh(){
  current=await api('/api/state');
@@ -318,12 +379,8 @@ $('saveAutoSyncAccountRoster').onclick=async()=>{
   notice(enabled?'账号自动同步已启用；已从 Magpie 更新监测目标。':'账号自动同步已关闭；原有监测目标保留。');
  }catch(e){notice('保存账号同步设置失败：'+(e?.message||String(e)),true)}
 };
-$('fingerprintAutomatic').onchange=()=>{$('fingerprintMode').disabled=!$('fingerprintAutomatic').checked};
-$('fingerprintMode').onchange=()=>{
- if($('fingerprintMode').value==='objective_rotation'){
-   $('fingerprintAutomatic').checked=true;
-   $('rotatePrompts').checked=true;
- }
+$('fingerprintAutomatic').onchange=()=>{
+ if($('fingerprintAutomatic').checked)$('rotatePrompts').checked=true;
 };
 $('manualPrompt').onchange=updateFingerprintExpected;
 $('manualTarget').onchange=updateFingerprintExpected;
@@ -341,11 +398,10 @@ $('saveFingerprintExpected').onclick=()=>action(async()=>{
 });
 $('saveAutoPrompts').onclick=()=>action(async()=>{
  const prompt_ids=[...document.querySelectorAll('#promptOptions input:checked')].map(x=>x.value);
- const fingerprint_mode=$('fingerprintAutomatic').checked?$('fingerprintMode').value:'off';
+ const fingerprint_mode=$('fingerprintAutomatic').checked?'objective_rotation':'off';
  if(!prompt_ids.length&&fingerprint_mode!=='objective_rotation')throw Error('至少选择一道客观题');
  if(fingerprint_mode==='objective_rotation'&&prompt_ids.length&&!$('rotatePrompts').checked)throw Error('指纹参与客观题轮换时，请勾选按轮次顺序轮换');
- if(fingerprint_mode==='periodic_24h'&&!confirm('启用周期指纹检测后，每个正常监测目标每 24 小时会增加 3 次上游请求，确认继续？'))return;
- if(fingerprint_mode==='objective_rotation'&&!confirm('指纹将作为自动检测题：每轮发送 3 次请求；连续三次可靠的指纹不一致可触发生产隔离。必须先为各监测账号设置参考模型，否则该轮只记不可用。确定启用？'))return;
+ if(fingerprint_mode==='objective_rotation'&&!confirm('指纹题一轮包含 3 次采样，可靠判定不一致就立即隔离；普通客观题仍须连续 3 次错误。预期模型自动匹配检测模型。确定启用？'))return;
  await api('/api/auto-prompts','POST',{prompt_ids,rotate:$('rotatePrompts').checked,fingerprint_mode});
 });
 $('saveCustom').onclick=()=>action(async()=>{
@@ -363,6 +419,39 @@ $('saveCustom').onclick=()=>action(async()=>{
  editingPrompt='';$('saveCustom').textContent='创建题目';
  for(const id of ['customName','customText','customGuidance','customAnswers'])$(id).value='';
 });
+$('timingScope').onchange=()=>{
+ timingDirty=false;
+ renderTiming(true);
+};
+$('timingInherit').onchange=()=>{
+ timingDirty=true;
+ if($('timingInherit').checked)setTimingValues(current?.state?.timing_policy||defaultTimings);
+ toggleTimingControls();
+};
+for(const [,id] of timingFields){
+ $(id).addEventListener('input',()=>{timingDirty=true});
+ $(id+'Unit').addEventListener('change',()=>{timingDirty=true});
+}
+$('resetTiming').onclick=()=>{
+ setTimingValues(defaultTimings);
+ timingDirty=true;
+};
+$('saveTiming').onclick=()=>action(async()=>{
+ const key=$('timingScope').value;
+ const t=key?(current?.state?.account_targets||{})[key]:null;
+ if(key&&!t)throw Error('监测目标已变化，请刷新后重试');
+ const inherit=Boolean(t&&$('timingInherit').checked);
+ const reschedule=$('timingReschedule').checked;
+ if(reschedule&&!confirm('重新计算可能让到期任务立即开始检测，但不会清除现有隔离。确认重新排程？'))return;
+ const policy=inherit?(current.state.timing_policy||defaultTimings):getTimingValues();
+ if(t)policy.scan_seconds=current.state.timing_policy?.scan_seconds||defaultTimings.scan_seconds;
+ await api('/api/timing','POST',{
+  account:t?.account||'',model:t?.model||'',policy,inherit,reschedule
+ });
+ timingDirty=false;
+ $('timingReschedule').checked=false;
+});
+
 $('saveConfig').onclick=async()=>{
  try{
   await api('/api/config','POST',{gateway_url:$('gatewayURL').value,gateway_key:$('gatewayKey').value,daily_limit:Number($('dailyLimit').value)});

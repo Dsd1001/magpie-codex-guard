@@ -15,7 +15,12 @@ function fixture({modelsError='',apiUpstream=false}={}){
    holds:{},
    account_targets:{},
    account_results:[],
-   auto_prompt_policy:{configured:false,rotate:true,prompt_ids:['milk'],fingerprint_mode:'after_failures'},
+   auto_prompt_policy:{configured:false,rotate:true,prompt_ids:['milk'],fingerprint_mode:'off'},
+   timing_policy:{
+    normal_seconds:1800,suspect_seconds:120,quarantine_first_seconds:21600,
+    quarantine_repeat_seconds:86400,recovery_seconds:120,unavailable_seconds:1800,
+    request_timeout_seconds:180,scan_seconds:60
+   },
    custom_prompts:[],
   },
   health:'',
@@ -44,6 +49,14 @@ function fixture({modelsError='',apiUpstream=false}={}){
    if(apiUpstream)payload.push({id:'example/gpt-6.1-sol',group:'example'});
   }
   else if(path==='/api/fingerprint-models')payload=[{id:'gpt-6-astra',name:'gpt-6-astra/6.1-sol'},{id:'gpt-6-sol',name:'gpt-6-sol'}];
+  else if(path==='/api/timing'&&method==='POST'){
+   const req=JSON.parse(options.body);
+   if(req.account){
+    const t=state.state.account_targets[req.account+'\x1f'+req.model];
+    t.timing_override=req.inherit?null:req.policy;
+   }else state.state.timing_policy=req.policy;
+   payload={ok:true};
+  }
   else if(path==='/api/fingerprint-expected'&&method==='POST'){
    const req=JSON.parse(options.body);
    const target=state.state.account_targets[req.account+'\x1f'+req.model];
@@ -182,29 +195,25 @@ test('saving the connection reports catalog failure instead of a false success',
  }finally{dom.window.close()}
 });
 
-test('fingerprint is in the same bank but excluded from objective rotation',async()=>{
+test('fingerprint as objective is optional; old periodic and risk-specific controls are removed',async()=>{
  const {dom,w,calls,state}=fixture();
  try{
-  await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
   await waitFor(()=>w.document.querySelector('#fingerprintExpected option[value="gpt-6-astra"]'));
-  const values=[...w.document.querySelectorAll('#promptOptions input[type="checkbox"]')].map(x=>x.value);
-  assert.deepEqual(values,['milk']);
-  assert.equal(w.document.querySelector('#fingerprintAutomatic').checked,true);
-  assert.equal(w.document.querySelector('#fingerprintMode').value,'after_failures');
-  w.document.querySelector('#fingerprintMode').value='periodic_24h';
+  assert.equal(w.document.querySelector('#fingerprintAutomatic').checked,false);
+  assert.equal(w.document.querySelector('#fingerprintMode'),null);
+  assert.deepEqual([...w.document.querySelectorAll('#promptOptions input')].map(x=>x.value),['milk']);
+  const checkbox=w.document.querySelector('#fingerprintAutomatic');
+  checkbox.checked=true;
+  checkbox.dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.querySelector('#rotatePrompts').checked,true);
   w.document.querySelector('#saveAutoPrompts').click();
-  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='periodic_24h');
-  const post=calls.findLast(c=>c.path==='/api/auto-prompts');
-  assert.deepEqual(JSON.parse(post.options.body).prompt_ids,['milk']);
-  assert.equal(JSON.parse(post.options.body).fingerprint_mode,'periodic_24h');
-  w.document.querySelector('#fingerprintAutomatic').checked=false;
-  w.document.querySelector('#fingerprintAutomatic').dispatchEvent(new w.Event('change'));
-  assert.equal(w.document.querySelector('#fingerprintMode').disabled,true);
+  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
+  const req=JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body);
+  assert.deepEqual(req,{prompt_ids:['milk'],rotate:true,fingerprint_mode:'objective_rotation'});
+  assert.match(w.document.querySelector('#rules .fingerprint-policy .hint').textContent,/一次判分/);
+  checkbox.checked=false;
   w.document.querySelector('#saveAutoPrompts').click();
   await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='off');
-  assert.equal(state.state.auto_prompt_policy.prompt_ids[0],'milk');
-  await waitFor(()=>w.document.querySelector('#notice').textContent.includes('操作已完成'));
-  await new Promise(resolve=>setTimeout(resolve,65));
  }finally{dom.window.close()}
 });
 
@@ -295,56 +304,60 @@ test('roster sync and explicitly approved production allowlist never send raw cr
  }finally{dom.window.close()}
 });
 
-test('new fingerprint objective rotation option is opt-in and persists without changing older modes',async()=>{
+test('fingerprint-only question mode is permitted, while mixed unrotated mode is refused',async()=>{
  const {dom,w,calls,state}=fixture();
- try{
-  await waitFor(()=>w.document.querySelector('#promptOptions input[value="milk"]')?.checked===true);
+ try {
+  await waitFor(()=>w.document.querySelector('#promptOptions input[value="milk"]'));
   w.document.querySelector('[data-tab="rules"]').click();
-  const mode=w.document.querySelector('#fingerprintMode');
-  const automatic=w.document.querySelector('#fingerprintAutomatic');
-  const rotate=w.document.querySelector('#rotatePrompts');
-  assert.equal(mode.value,'after_failures','old installations retain their current trigger');
-  rotate.checked=false;
-  mode.value='objective_rotation';
-  mode.dispatchEvent(new w.Event('change'));
-  assert.equal(automatic.checked,true);
-  assert.equal(rotate.checked,true,'fingerprint in objective rotation requires round robin');
-  w.document.querySelector('#saveAutoPrompts').click();
-  await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
-  const post=calls.findLast(c=>c.path==='/api/auto-prompts');
-  assert.deepEqual(JSON.parse(post.options.body),{
-   prompt_ids:['milk'],rotate:true,fingerprint_mode:'objective_rotation',
-  });
-  await waitFor(()=>mode.value==='objective_rotation');
-  assert.match(w.document.querySelector('#rules .fingerprint-policy .hint').textContent,/连续 3 次强不一致/);
-  // Saving the new mode does not affect routing enable flags.
-  assert.equal(state.state.route.auto_apply,false);
-  await new Promise(resolve=>setTimeout(resolve,65));
- }finally{dom.window.close()}
-});
-
-test('fingerprint-only question mode is allowed, but mixed unrotated configuration is rejected',async()=>{
- const {dom,w,calls,state}=fixture();
- try{
-  await waitFor(()=>w.document.querySelector('#promptOptions input[value="milk"]')?.checked===true);
-  w.document.querySelector('[data-tab="rules"]').click();
-  const mode=w.document.querySelector('#fingerprintMode');
-  mode.value='objective_rotation';
-  mode.dispatchEvent(new w.Event('change'));
+  const checkbox=w.document.querySelector('#fingerprintAutomatic');
+  checkbox.checked=true;
+  checkbox.dispatchEvent(new w.Event('change'));
   const rotate=w.document.querySelector('#rotatePrompts');
   rotate.checked=false;
   const save=w.document.querySelector('#saveAutoPrompts');
-  const previous=calls.filter(c=>c.path==='/api/auto-prompts').length;
+  const before=calls.filter(c=>c.path==='/api/auto-prompts').length;
   save.click();
   await waitFor(()=>w.document.querySelector('#notice').textContent.includes('请勾选按轮次顺序轮换'));
-  assert.equal(calls.filter(c=>c.path==='/api/auto-prompts').length,previous);
-  for(const box of w.document.querySelectorAll('#promptOptions input[type="checkbox"]'))box.checked=false;
+  assert.equal(calls.filter(c=>c.path==='/api/auto-prompts').length,before);
+  for(const el of w.document.querySelectorAll('#promptOptions input'))el.checked=false;
   save.click();
   await waitFor(()=>state.state.auto_prompt_policy.fingerprint_mode==='objective_rotation');
-  const body=JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body);
-  assert.deepEqual(body.prompt_ids,[],'the one new mode can select only fingerprint');
-  assert.equal(body.rotate,false);
+  assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/auto-prompts').options.body).prompt_ids,[]);
+ }finally{dom.window.close()}
+});
+
+test('time policy edits persist global defaults and per-target overrides without automatic rescheduling',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try {
+  await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
+  w.document.querySelector('[data-tab="settings"]').click();
+  assert.equal(w.document.querySelector('#timingNormal').value,'30');
+  assert.equal(w.document.querySelector('#timingNormalUnit').value,'60');
+  w.document.querySelector('#timingNormal').value='45';
+  w.document.querySelector('#saveTiming').click();
+  await waitFor(()=>state.state.timing_policy.normal_seconds===2700);
+  assert.equal(JSON.parse(calls.findLast(c=>c.path==='/api/timing').options.body).reschedule,false);
+  w.document.querySelector('#accountSelect').value='aaa';
+  w.document.querySelector('#modelSelect').value='codex/gpt-6.1-sol';
+  w.document.querySelector('#addAccount').click();
+  await waitFor(()=>w.document.querySelector('#timingScope option').length>1);
+  w.document.querySelector('#timingScope').value='aaa\x1fcodex/gpt-6.1-sol';
+  w.document.querySelector('#timingScope').dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.querySelector('#timingInherit').checked,true);
+  assert.equal(w.document.querySelector('#timingNormal').disabled,true);
+  w.document.querySelector('#timingInherit').checked=false;
+  w.document.querySelector('#timingInherit').dispatchEvent(new w.Event('change'));
+  assert.equal(w.document.querySelector('#timingNormal').disabled,false);
+  assert.equal(w.document.querySelector('#timingScan').disabled,true);
+  w.document.querySelector('#timingNormal').value='10';
+  w.document.querySelector('#saveTiming').click();
+  await waitFor(()=>Object.values(state.state.account_targets)[0].timing_override?.normal_seconds===600);
+  assert.equal(state.state.timing_policy.normal_seconds,2700);
+  const body=JSON.parse(calls.findLast(c=>c.path==='/api/timing').options.body);
+  assert.equal(body.account,'aaa');
+  assert.equal(body.policy.normal_seconds,600);
+  assert.equal(body.inherit,false);
+  assert.equal(body.reschedule,false);
   assert.equal(state.state.route.auto_apply,false);
-  await new Promise(resolve=>setTimeout(resolve,65));
  }finally{dom.window.close()}
 });

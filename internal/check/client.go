@@ -25,7 +25,7 @@ func ValidateGateway(raw string) error {
 // account plugin; absent/unavailable logins must fail instead of falling
 // back to an arbitrary other account.
 var probeClient = &http.Client{
-	Timeout:       180 * time.Second,
+	Timeout:       0, // Per-target request deadlines are enforced by the caller context.
 	CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("禁止检测请求重定向") },
 }
 

@@ -86,8 +86,8 @@ func TestFingerprintPromptListedButNeverObjectiveRubric(t *testing.T) {
 	if err := s.ConfigureAutoPrompts([]string{FingerprintPromptID}, true); err == nil {
 		t.Fatal("fingerprint wrongly entered objective failure rubric")
 	}
-	if got := s.AutoPromptSettings().FingerprintMode; got != FingerprintOnFailure {
-		t.Fatalf("migration should preserve original after-failures mode: %q", got)
+	if got := s.AutoPromptSettings().FingerprintMode; got != FingerprintOff {
+		t.Fatalf("default must disable standalone fingerprint jobs: %q", got)
 	}
 }
 
@@ -133,91 +133,28 @@ func TestManualFingerprintUsesThreeSamplesWithoutTouchingHolds(t *testing.T) {
 	}
 }
 
-func TestPeriodicFingerprintNeedsOptInAndPersists24HourTiming(t *testing.T) {
-	s, count, close := fingerprintBankFixture(t)
-	fake := &fakeFingerprint{verdict: "mismatch"}
-	s.fingerprint = fake
-	if err := s.TriggerFingerprint("aaa", "codex/gpt-6.1-sol", false); err == nil {
-		t.Fatal("periodic trigger was allowed before opt-in")
-	}
-	before := *s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintPeriodic); err != nil {
-		t.Fatal(err)
-	}
-	t1 := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	if t1.ConsecutiveFails != before.ConsecutiveFails || t1.State != before.State ||
-		time.Until(t1.NextFingerprintAt) < 23*time.Hour {
-		t.Fatalf("enabling periodic fingerprint reset objective or scheduled immediately: %+v", t1)
-	}
-	// Due in the past but objective is NOT due yet.
-	t1.NextFingerprintAt = time.Now().Add(-time.Minute)
-	s.state.Route.ScheduleEnabled = true
-	if err := s.saveLocked(); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ScheduleOneAccount(time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	s.wg.Wait()
-	if count.Load() != 3 || fake.call.Load() != 1 {
-		t.Fatalf("periodic samples=%d eval=%d", count.Load(), fake.call.Load())
-	}
-	t1 = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	if t1.State != "passed" || t1.ConsecutiveFails != 0 || time.Until(t1.NextFingerprintAt) < 23*time.Hour {
-		t.Fatalf("periodic fingerprint mutated objective or rescheduled badly: %+v", t1)
-	}
-	if len(s.state.Holds) != 0 || s.state.Route.AutoApply {
-		t.Fatal("periodic fingerprint affected quarantine")
-	}
-	last := s.state.AccountResults[len(s.state.AccountResults)-1]
-	if last.PromptName != "周期性模型指纹检测" || last.Verdict != "mismatch" {
-		t.Fatalf("periodic result: %+v", last)
-	}
-	dir := s.dir
-	next := t1.NextFingerprintAt
-	s.Close()
-	reopened, err := New(dir, filepath.Join(dir, "gate.js"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	saved := reopened.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	if !next.Equal(saved.NextFingerprintAt) || reopened.AutoPromptSettings().FingerprintMode != FingerprintPeriodic {
-		t.Fatal("fingerprint timer or policy did not survive restart")
-	}
-	reopened.Close()
-	// Close original fixture's external test server without closing s twice.
-	_ = close
-}
-
-func TestTurningOffFingerprintStillClassifiesObjectiveHoldLow(t *testing.T) {
+func TestStandaloneFingerprintJobsAreRetiredAndManualIsSafe(t *testing.T) {
 	s, count, close := fingerprintBankFixture(t)
 	defer close()
 	s.fingerprint = &fakeFingerprint{verdict: "mismatch"}
-	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintOff); err != nil {
+	if err := s.TriggerFingerprint("aaa", "codex/gpt-6.1-sol", false); err == nil {
+		t.Fatal("standalone periodic fingerprint was allowed")
+	}
+	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintPeriodic); err == nil {
+		t.Fatal("legacy periodic mode was accepted")
+	}
+	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintOnFailure); err == nil {
+		t.Fatal("legacy post-failure mode was accepted")
+	}
+	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, true); err != nil {
 		t.Fatal(err)
 	}
-	fake := s.fingerprint.(*fakeFingerprint)
-	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, false); err == nil {
-		t.Fatal("fingerprint accepted as an auto objective")
+	s.wg.Wait()
+	if count.Load() != 3 {
+		t.Fatalf("manual fingerprint should use 3 upstream samples, got %d", count.Load())
 	}
-	// 3 objective failures still create a low-risk hold, but do not send
-	// three more fingerprint probes when auto fingerprint is explicitly off.
-	s.mu.Lock()
-	t1 := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	t1.ConsecutiveFails = 2
-	t1.State = "suspect"
-	s.mu.Unlock()
-	s.mu.Lock()
-	hold := startHold(*t1, time.Now())
-	s.state.Holds["aaa"] = hold
-	s.mu.Unlock()
-	s.collectFingerprint(s.ctx, "aaa", "codex/gpt-6.1-sol")
-	if count.Load() != 0 || fake.call.Load() != 1 {
-		t.Fatalf("disabled mode still sampled: %d", count.Load())
-	}
-	got := s.state.Holds["aaa"]
-	if got.Risk != "low" || got.Fingerprint.Verdict != "indeterminate" {
-		t.Fatalf("disabled automatic fingerprint did not handle safe fallback: %+v", got)
+	if len(s.state.Holds) != 0 {
+		t.Fatal("manual fingerprint created isolation")
 	}
 }
 
@@ -276,7 +213,8 @@ func TestFingerprintModeAPIAndErrorContainment(t *testing.T) {
 		mode string
 		want int
 	}{
-		{"periodic_24h", 200},
+		{"objective_rotation", 200},
+		{"periodic_24h", 400},
 		{"unrecognized-value", 400},
 		{"off", 200},
 	} {

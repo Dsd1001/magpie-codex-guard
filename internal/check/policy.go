@@ -5,10 +5,11 @@ import (
 	"time"
 )
 
+// Legacy constants remain for callers/tests but runtime decisions use TimingPolicy.
 const (
 	NormalInterval        = 30 * time.Minute
 	SuspectInterval       = 2 * time.Minute
-	HighRiskInterval      = 48 * time.Hour
+	HighRiskInterval      = 48 * time.Hour // historical
 	LowRiskFirstInterval  = 6 * time.Hour
 	LowRiskRepeatInterval = 24 * time.Hour
 	UnavailableInterval   = 30 * time.Minute
@@ -16,65 +17,62 @@ const (
 const (
 	PhaseHealthy     = "passed"
 	PhaseSuspect     = "suspect"
-	PhaseFingerprint = "fingerprint_pending"
-	PhaseHigh        = "quarantined_high"
-	PhaseLow         = "quarantined_low"
+	PhaseFingerprint = "fingerprint_pending" // historical
+	PhaseHigh        = "quarantined_high"    // historical
+	PhaseLow         = "quarantined_low"     // historical
+	PhaseIsolated    = "quarantined"
 	PhaseRecovery    = "recovery_confirm"
 )
 
-func phaseForRisk(risk string) string {
-	if risk == "high" {
-		return PhaseHigh
-	}
-	return PhaseLow
-}
+func phaseForRisk(string) string { return PhaseIsolated }
 func isolatedInterval(hold QuarantineHold) time.Duration {
-	if hold.Risk == "high" {
-		return HighRiskInterval
-	}
+	return isolatedIntervalWithTiming(hold, DefaultTimingPolicy())
+}
+func isolatedIntervalWithTiming(hold QuarantineHold, timing TimingPolicy) time.Duration {
 	if !hold.FirstRecheckDone {
-		return LowRiskFirstInterval
+		return timing.first()
 	}
-	return LowRiskRepeatInterval
+	return timing.repeat()
 }
 
-// objectiveTransition is deliberately pure: caller owns state persistence and
-// must reconcile active production routes immediately after a hold mutation.
-// Never interpret a failed HTTP request as an objective answer failure.
-func objectiveTransition(target *AccountTarget, hold *QuarantineHold, verdict, prompt string, now time.Time) (createHold, releaseHold bool) {
+// objectiveTransition keeps the legacy test entrypoint with default timings.
+func objectiveTransition(t *AccountTarget, h *QuarantineHold, verdict, prompt string, now time.Time) (bool, bool) {
+	return objectiveTransitionWithTiming(t, h, verdict, prompt, now, DefaultTimingPolicy())
+}
+
+// All automatic prompts share recovery and isolation scheduling.
+// A three-sample fingerprint batch is ONE scored objective answer: one reliable
+// mismatch directly isolates. Other objective questions require three
+// consecutive wrong answers to the same question. Inconclusive results are
+// neutral and cannot create a hold or release an existing one.
+func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, verdict, prompt string, now time.Time, timing TimingPolicy) (createHold, releaseHold bool) {
 	target.CheckedAt = now
-	if verdict == "unavailable" {
-		target.Reason = "上游请求不可用，本轮不计入质量结果"
+	if verdict != "passed" && verdict != "failed" {
+		target.Reason = "上游请求失败或无法可靠判分，本轮不计入质量结果"
 		if hold != nil {
-			if hold.Risk == "pending" {
-				hold.NextCheckAt = now.Add(UnavailableInterval)
-			} else if hold.ConfirmationPasses == 1 {
-				hold.NextCheckAt = now.Add(UnavailableInterval)
-			} else {
-				hold.NextCheckAt = now.Add(isolatedInterval(*hold))
-			}
+			hold.NextCheckAt = now.Add(timing.unavailable())
 			target.NextCheckAt = hold.NextCheckAt
 		} else {
 			target.State = "unavailable"
-			target.NextCheckAt = now.Add(UnavailableInterval)
+			target.NextCheckAt = now.Add(timing.unavailable())
 		}
 		return false, false
 	}
-	if hold != nil && hold.Risk != "pending" {
+	if hold != nil {
 		if verdict == "passed" {
 			hold.ConfirmationPasses++
 			target.ConsecutivePasses = hold.ConfirmationPasses
 			if hold.ConfirmationPasses >= 2 {
 				target.State = PhaseHealthy
-				target.Reason = "连续两次恢复通过，解除隔离"
-				target.NextCheckAt = now.Add(NormalInterval)
+				target.Reason = "连续两次回答正确，解除隔离"
+				target.NextCheckAt = now.Add(timing.normal())
 				target.ConsecutiveFails = 0
 				target.ConsecutivePasses = 0
 				return false, true
 			}
 			target.State = PhaseRecovery
-			target.Reason = "首次恢复通过，2 分钟后再次确认"
-			hold.NextCheckAt = now.Add(SuspectInterval)
+			target.Reason = "首次恢复正确，等待第二次确认"
+			hold.NextCheckAt = now.Add(timing.recovery())
 			target.NextCheckAt = hold.NextCheckAt
 			return false, false
 		}
@@ -82,16 +80,16 @@ func objectiveTransition(target *AccountTarget, hold *QuarantineHold, verdict, p
 		hold.FirstRecheckDone = true
 		target.ConsecutivePasses = 0
 		target.ConsecutiveFails++
-		target.State = phaseForRisk(hold.Risk)
-		target.Reason = fmt.Sprintf("隔离复测仍回答错误（%s风险）", hold.Risk)
-		hold.NextCheckAt = now.Add(isolatedInterval(*hold))
+		target.State = PhaseIsolated
+		target.Reason = "隔离复测仍回答错误"
+		hold.NextCheckAt = now.Add(timing.repeat())
 		target.NextCheckAt = hold.NextCheckAt
 		return false, false
 	}
-	if hold != nil && hold.Risk == "pending" {
-		// An in-flight fingerprint must not be replaced by a different objective
-		// test result or prematurely release an account.
-		return false, false
+	// Never combine failures from different questions, including direct API
+	// callers that bypass the normal scheduler's same-question retry choice.
+	if verdict == "failed" && target.ConsecutiveFails > 0 && target.LastAutoPrompt != "" && target.LastAutoPrompt != prompt {
+		target.ConsecutiveFails = 0
 	}
 	target.LastAutoPrompt = prompt
 	if verdict == "passed" {
@@ -100,42 +98,46 @@ func objectiveTransition(target *AccountTarget, hold *QuarantineHold, verdict, p
 		target.State = PhaseHealthy
 		target.Reason = ""
 		target.PromptRotation++
-		target.NextCheckAt = now.Add(NormalInterval)
+		target.NextCheckAt = now.Add(timing.normal())
 		return false, false
 	}
 	target.ConsecutiveFails++
 	target.ConsecutivePasses = 0
 	target.State = PhaseSuspect
-	target.Reason = fmt.Sprintf("客观题连续 %d 次回答错误", target.ConsecutiveFails)
-	target.NextCheckAt = now.Add(SuspectInterval)
-	if target.ConsecutiveFails >= 3 {
-		target.State = PhaseFingerprint
-		target.Reason = "客观题连续三次失败，立即暂停生产路由并进行指纹复核"
-		target.NextCheckAt = now
+	target.Reason = fmt.Sprintf("同一道客观题连续 %d 次回答错误", target.ConsecutiveFails)
+	target.NextCheckAt = now.Add(timing.suspect())
+	threshold := 3
+	if prompt == FingerprintPromptID {
+		threshold = 1
+	}
+	if target.ConsecutiveFails >= threshold {
+		target.State = PhaseIsolated
+		if prompt == FingerprintPromptID {
+			target.Reason = "指纹题一次完整检测确认不一致，直接隔离"
+		} else {
+			target.Reason = "普通客观题连续三次回答错误，直接隔离"
+		}
+		target.NextCheckAt = now.Add(timing.first())
 		return true, false
 	}
 	return false, false
 }
 func startHold(t AccountTarget, now time.Time) QuarantineHold {
+	return startHoldWithTiming(t, now, DefaultTimingPolicy())
+}
+func startHoldWithTiming(t AccountTarget, now time.Time, timing TimingPolicy) QuarantineHold {
 	return QuarantineHold{
-		Account: t.Account, Model: t.Model, Risk: "pending",
-		Reason: "客观题连续三次失败，待模型指纹复核",
-		Since:  now, NextCheckAt: now,
+		Account: t.Account, Model: t.Model, Prompt: t.LastAutoPrompt,
+		Risk: "isolated", Reason: t.Reason,
+		Since: now, NextCheckAt: now.Add(timing.first()),
 	}
 }
+
+// Legacy internal helper: no longer used for new holds. Old fingerprint
+// evidence is preserved, but it cannot alter isolation timing or risk.
 func classifyHold(hold *QuarantineHold, report FingerprintReport, now time.Time) {
 	hold.Fingerprint = report
-	if report.Verdict == "mismatch" {
-		hold.Risk = "high"
-		hold.Reason = "客观题连续失败，且指纹明显偏离预期"
-	} else {
-		// match AND indeterminate are low risk, as explicitly requested.
-		hold.Risk = "low"
-		if report.Verdict == "indeterminate" {
-			hold.Reason = "客观题连续失败；指纹无法判定，按低风险隔离"
-		} else {
-			hold.Reason = "客观题连续失败，指纹与预期类别一致"
-		}
-	}
+	hold.Risk = "isolated"
+	hold.Reason = "客观题连续失败，统一隔离"
 	hold.NextCheckAt = now.Add(isolatedInterval(*hold))
 }

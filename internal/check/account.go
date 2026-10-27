@@ -41,9 +41,6 @@ func (s *Service) SetAccountTarget(account, model string, enabled bool) error {
 	target := s.state.AccountTargets[id]
 	if target == nil {
 		target = &AccountTarget{Account: stable, Model: model, State: "unverified", Enabled: enabled}
-		if s.effectiveAutoPromptPolicyLocked().FingerprintMode == FingerprintPeriodic {
-			target.NextFingerprintAt = time.Now().Add(24 * time.Hour)
-		}
 		s.state.AccountTargets[id] = target
 	}
 	if _, held := s.state.Holds[stable]; held && !enabled {
@@ -103,9 +100,6 @@ func (s *Service) DiscoverAccountTargets(model string) (int, error) {
 		id := accountTargetID(a.ID, model)
 		if s.state.AccountTargets[id] == nil {
 			target := &AccountTarget{Account: a.ID, Model: model, State: "unverified", Enabled: true}
-			if s.effectiveAutoPromptPolicyLocked().FingerprintMode == FingerprintPeriodic {
-				target.NextFingerprintAt = time.Now().Add(24 * time.Hour)
-			}
 			s.state.AccountTargets[id] = target
 			created = append(created, id)
 		}
@@ -141,12 +135,6 @@ func (s *Service) TriggerAccount(account, model, prompt string, manual bool) err
 	if s.accountProbeActive {
 		s.mu.Unlock()
 		return errors.New("已有账号检测正在执行")
-	}
-	if !manual {
-		if hold, ok := s.state.Holds[account]; ok && hold.Risk == "pending" {
-			s.mu.Unlock()
-			return errors.New("请先执行指纹复核")
-		}
 	}
 	p, ok := s.findPromptLocked(prompt)
 	if !ok {
@@ -188,7 +176,7 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 	var answer string
 	var tokens int
 	if err == nil {
-		ctx, cancel := context.WithTimeout(parent, 180*time.Second)
+		ctx, cancel := context.WithTimeout(parent, s.requestTimeout(account, model))
 		// Request the native Magpie model directly. The account is pinned
 		// independently by X-Magpie-Account inside CallAccount.
 		answer, tokens, err = CallAccount(ctx, cfg, model, account, p.Text)
@@ -208,7 +196,7 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 	}
 	s.mu.Lock()
 	s.addResult(r)
-	needFinger, routeChanged := false, false
+	routeChanged := false
 	if !manual && p.Automatic {
 		id := accountTargetID(account, model)
 		if t := s.state.AccountTargets[id]; t != nil {
@@ -217,10 +205,10 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 			if held {
 				holdPtr = &hold
 			}
-			first, release := objectiveTransition(t, holdPtr, verdict, p.ID, now)
+			timing := s.timingForTargetLocked(t)
+			first, release := objectiveTransitionWithTiming(t, holdPtr, verdict, p.ID, now, timing)
 			if first {
-				s.state.Holds[account] = startHold(*t, now)
-				needFinger = true
+				s.state.Holds[account] = startHoldWithTiming(*t, now, timing)
 				routeChanged = true
 			} else if release {
 				delete(s.state.Holds, account)
@@ -245,13 +233,7 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 			s.noteSchedulerError(fmt.Errorf("账号隔离路由同步失败：%w", err))
 		}
 	}
-	if needFinger {
-		if !active || s.routeHasHold(account) || s.VerifyLiveHold(account) {
-			s.collectFingerprint(parent, account, model)
-		} else {
-			s.noteSchedulerError(errors.New("生产路由未成功隔离，已停止指纹复核，等待路由修复"))
-		}
-	}
+
 }
 func (s *Service) routeHasHold(account string) bool {
 	s.mu.Lock()
@@ -271,7 +253,7 @@ func (s *Service) sampleFingerprint(parent context.Context, account, model, expe
 		var answer string
 		var tokens int
 		if err == nil {
-			ctx, cancel := context.WithTimeout(parent, 180*time.Second)
+			ctx, cancel := context.WithTimeout(parent, s.requestTimeout(account, model))
 			answer, tokens, err = CallAccount(ctx, cfg, model, account, ch.Prompt)
 			cancel()
 		}
@@ -308,96 +290,6 @@ func (s *Service) sampleFingerprint(parent context.Context, account, model, expe
 	return report, batch
 }
 
-func (s *Service) collectFingerprint(parent context.Context, account, model string) {
-	s.mu.Lock()
-	hold, ok := s.state.Holds[account]
-	if !ok || hold.Risk != "pending" {
-		s.mu.Unlock()
-		return
-	}
-	expected := model
-	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil && t.FingerprintExpected != "" {
-		expected = t.FingerprintExpected
-	}
-	runner := s.fingerprint
-	mode := s.effectiveAutoPromptPolicyLocked().FingerprintMode
-	s.mu.Unlock()
-	var report FingerprintReport
-	var batch string
-	if mode == FingerprintOff {
-		report = runner.Evaluate(nil, expected)
-		report.Verdict = "indeterminate"
-		report.UsedOutputs = 0
-		report.Diagnostic = "自动指纹检测已关闭；按低风险等待客观题复测"
-		batch = Secret()[:12]
-	} else {
-		report, batch = s.sampleFingerprint(parent, account, model, expected, runner)
-	}
-	now := time.Now()
-	s.mu.Lock()
-	hold, ok = s.state.Holds[account]
-	if !ok || hold.Risk != "pending" {
-		s.mu.Unlock()
-		return
-	}
-	classifyHold(&hold, report, now)
-	s.state.Holds[account] = hold
-	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil {
-		t.State = phaseForRisk(hold.Risk)
-		t.NextCheckAt = hold.NextCheckAt
-		t.Reason = hold.Reason
-		t.FingerprintVersion = report.Version
-	}
-	s.addResult(AccountResult{ID: Secret()[:12], Batch: batch, Account: account, Model: model, Prompt: "fingerprint", PromptName: "指纹复核结论", Verdict: hold.Risk, Time: now, Fingerprint: &report})
-	if err := s.saveLocked(); err != nil {
-		s.health = err.Error()
-	}
-	s.mu.Unlock()
-}
-
-// resuming an interrupted pending-fingerprint stage never re-runs the third
-// objective check. Only one account request batch can be active at a time.
-func (s *Service) TriggerPendingFingerprint(account string) error {
-	s.mu.Lock()
-	hold, ok := s.state.Holds[account]
-	if !ok || hold.Risk != "pending" {
-		s.mu.Unlock()
-		return errors.New("账号无待复核状态")
-	}
-	if s.accountProbeActive {
-		s.mu.Unlock()
-		return errors.New("检测服务繁忙")
-	}
-	if s.state.Config.GatewayURL == "" || s.state.Config.GatewayKey == "" {
-		s.mu.Unlock()
-		return errors.New("尚未配置网关")
-	}
-	s.accountProbeActive = true
-	s.wg.Add(1)
-	active := s.state.Route.AutoApply
-	s.mu.Unlock()
-	go func() {
-		defer s.wg.Done()
-		defer func() { s.mu.Lock(); s.accountProbeActive = false; s.mu.Unlock() }()
-		if active {
-			ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
-			_, err := s.ApplyRouting(ctx, false)
-			cancel()
-			if err != nil {
-				s.noteSchedulerError(err)
-				// A pending fingerprint is allowed to resume ONLY if the
-				// current production keys demonstrably exclude all holds.
-				if !s.VerifyLiveHold(account) {
-					return
-				}
-			} else if !s.routeHasHold(account) && !s.VerifyLiveHold(account) {
-				return
-			}
-		}
-		s.collectFingerprint(s.ctx, account, hold.Model)
-	}()
-	return nil
-}
 func (s *Service) configureTargetFingerprint(account, model, expected string) error {
 	if expected != "" {
 		if strings.ContainsAny(expected, "\r\n") || len(expected) > 128 {
@@ -429,4 +321,8 @@ func (s *Service) configureTargetFingerprint(account, model, expected string) er
 	}
 	t.FingerprintExpected = expected
 	return s.saveLocked()
+}
+
+func (s *Service) TriggerPendingFingerprint(account string) error {
+	return errors.New("已取消额外指纹复核；请等待统一客观题隔离复测")
 }

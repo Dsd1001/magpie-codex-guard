@@ -19,8 +19,10 @@ guard console and SQLite state contain stable identities only.
    key. Never put the key itself in this file. Enrollment is explicit to avoid
    spending probe quota on every configured provider.
 3. In the guard console, add the enrolled API account with its qualified model,
-   such as `example/gpt-6.1-sol`. Save an available fingerprint reference before
-   enabling fingerprint scoring in automatic rotation.
+   such as `example/gpt-6.1-sol`. If the model maps to the local fingerprint
+   library, automatic fingerprint scoring works without a separate saved
+   expected-model setting. Unknown aliases remain neutral until explicitly
+   mapped via the advanced reference override.
 
 The stable monitoring ID incorporates the provider and key fingerprint. Probes
 resolve Magpie's native routing trace ID: `provider` for one active key, or
@@ -30,10 +32,17 @@ explicit enrollment and a new monitoring target.
 
 ## Isolation and recovery
 
-- Healthy and temporarily unavailable targets are checked every 30 minutes.
-- A fingerprint round samples three outputs. Inconclusive results and transport
-  errors, including HTTP 429, do not count as model quality failures.
-- Existing consecutive failure, review and recovery rules apply to API targets.
+- Healthy targets default to one check every 30 minutes; intervals and
+  request timeouts can be customized globally or per API monitoring target.
+- One completed fingerprint question contains three samples. A reliable
+  mismatch immediately isolates the API provider; no additional fingerprint
+  review or high/low risk classification runs.
+- Other objective questions require three wrong answers to the same question
+  before isolation. Inconclusive results and transport failures, including
+  HTTP 429, do not count as quality failures.
+- Recovery uses the same question twice, with a customizable confirmation
+  interval. The first and subsequent quarantine retests have independently
+  configurable intervals (default 6 hours, then 24 hours).
 - API isolation removes the provider from production Gateway Key `models`
   scopes. This currently isolates the **whole provider**, including its other
   keys and models. Use separate provider entries for independent isolation.
@@ -59,16 +68,16 @@ category displayed as `gpt-6-astra/6.1-sol` has the internal ID `gpt-6-astra`.
 ## Validation
 
 `go test ./... -count=1` covers fixed routing, provider/model binding, automatic
-failure and review, production isolation, dedicated probe access, persistence,
+question-specific failure thresholds, production isolation, custom
+timing policies, dedicated probe access, persistence,
 recovery, HTTP 429 handling and external scope conflicts. The routing identity
 tests cover single, multiple, disabled and duplicate saved keys.
 
 ## Packaging
 
 Build and install a package containing the updated helper with
-`npm run build:release`. A source-only `github:` installation with plugin alpha.19 downloads the
-SHA-256-pinned alpha.18 helper, which includes API enrollment and provider
-quarantine. The alpha.19 Release package bundles rebuilt binaries. Both
-installation methods support API monitoring; future installer updates must
-pin an existing, immutable, verified backend Release. No integrity checks
-are removed by this change.
+`npm run build:release`. A source-only `github:` installation currently uses a SHA-256-pinned
+alpha.18 helper (API enrollment remains available, but the new unified
+quarantine and custom timing are only in the alpha.20 complete Release package).
+The next source-installer update must pin this immutable and verified alpha.20
+backend. Never remove integrity checks to work around publishing order.

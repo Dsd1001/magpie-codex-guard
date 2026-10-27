@@ -7,11 +7,8 @@ import (
 	"time"
 )
 
-// fingerprintAsObjectiveVerdict is deliberately conservative. It treats a
-// strongly identified mismatch as one failed automatic question, but treats
-// incomplete, ambiguous or unavailable fingerprints as UNAVAILABLE, never
-// as objective failures. The scorer's "mismatch" verdict itself already
-// requires strong local-reference evidence.
+// One complete three-sample fingerprint batch counts as ONE objective answer.
+// Partial or inconclusive batches are neutral and can never trigger holds.
 func fingerprintAsObjectiveVerdict(report FingerprintReport, expected string) string {
 	if expected == "" || report.UsedOutputs != 3 {
 		return "unavailable"
@@ -26,9 +23,8 @@ func fingerprintAsObjectiveVerdict(report FingerprintReport, expected string) st
 	}
 }
 
-// TriggerAutomaticFingerprint is only available in the explicitly opted-in
-// objective_rotation mode. Manual and 24-hour fingerprints still use
-// TriggerFingerprint, which never changes objective streaks or quarantine.
+// Fingerprints participate only in the ordinary automatic question bank.
+// No separate risk-classification fingerprint is executed after three errors.
 func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 	if err := ValidateAccount(account); err != nil {
 		return err
@@ -49,24 +45,17 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 	}
 	if s.effectiveAutoPromptPolicyLocked().FingerprintMode != FingerprintObjective {
 		s.mu.Unlock()
-		return errors.New("模型指纹未开启自动题库轮换")
-	}
-	if hold, ok := s.state.Holds[account]; ok && hold.Risk == "pending" {
-		s.mu.Unlock()
-		return errors.New("请先完成隔离指纹复核")
+		return errors.New("模型指纹未加入自动客观题题库")
 	}
 	if s.state.Config.GatewayURL == "" || s.state.Config.GatewayKey == "" {
 		s.mu.Unlock()
 		return errors.New("专用检测 Gateway Key 未配置")
 	}
-	// Explicit target reference is required when fingerprint evidence may
-	// contribute to production quarantine. Never guess a detector model ID
-	// from a gateway alias or implicitly accept an unknown model.
-	expected := target.FingerprintExpected
+	expected, refErr := resolveFingerprintReference(model, target.FingerprintExpected)
 	runner := s.fingerprint
 	before := *target
 	target.State = "checking"
-	target.Reason = "自动题库 · 模型指纹检测中"
+	target.Reason = "自动客观题 · 模型指纹检测中"
 	if err := s.saveLocked(); err != nil {
 		*target = before
 		s.mu.Unlock()
@@ -75,11 +64,11 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 	s.accountProbeActive = true
 	s.wg.Add(1)
 	s.mu.Unlock()
-	go s.runAutomaticFingerprint(s.ctx, account, model, expected, runner)
+	go s.runAutomaticFingerprint(s.ctx, account, model, expected, refErr, runner)
 	return nil
 }
 
-func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, expected string, runner FingerprintRunner) {
+func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, expected string, refErr error, runner FingerprintRunner) {
 	defer s.wg.Done()
 	defer func() {
 		s.mu.Lock()
@@ -87,38 +76,38 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, e
 		s.mu.Unlock()
 	}()
 
-	report := FingerprintReport{Verdict: "indeterminate", Diagnostic: "该监测目标未设置指纹预期参考模型：请先在手动检测区保存", UsedOutputs: 0}
+	report := FingerprintReport{Verdict: "indeterminate", UsedOutputs: 0}
 	batch := ""
-	if expected != "" {
+	if refErr != nil {
+		report.Diagnostic = refErr.Error()
+	} else {
 		report, batch = s.sampleFingerprint(ctx, account, model, expected, runner)
 	}
 	verdict := fingerprintAsObjectiveVerdict(report, expected)
 	now := time.Now()
 	result := AccountResult{
 		ID: Secret()[:12], Batch: batch, Account: account, Model: model,
-		Prompt: FingerprintPromptID, PromptName: "自动题库 · 模型指纹检测",
+		Prompt: FingerprintPromptID, PromptName: "自动客观题 · 模型指纹检测",
 		Time: now, Verdict: verdict, Fingerprint: &report,
 	}
-	if expected == "" {
+	if refErr != nil {
 		result.Error = report.Diagnostic
 	}
-	// All sample rows + the final fingerprint report are persisted before
-	// any routing action; no incomplete/ambiguous batch can create a hold.
 	s.mu.Lock()
 	s.addResult(result)
-	needFinger, routeChanged := false, false
+	routeChanged := false
 	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil {
 		var holdPtr *QuarantineHold
 		hold, held := s.state.Holds[account]
 		if held {
 			holdPtr = &hold
 		}
-		first, release := objectiveTransition(t, holdPtr, verdict, FingerprintPromptID, now)
+		timing := s.timingForTargetLocked(t)
+		first, release := objectiveTransitionWithTiming(t, holdPtr, verdict, FingerprintPromptID, now, timing)
 		t.FingerprintVersion = report.Version
 		t.LastFingerprintAt = now
 		if first {
-			s.state.Holds[account] = startHold(*t, now)
-			needFinger = true
+			s.state.Holds[account] = startHoldWithTiming(*t, now, timing)
 			routeChanged = true
 		} else if release {
 			delete(s.state.Holds, account)
@@ -130,7 +119,7 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, e
 	if err := s.saveLocked(); err != nil {
 		s.health = err.Error()
 		s.mu.Unlock()
-		return // never update production routing without durable verdicts
+		return // no routing changes unless the verdict was durable
 	}
 	active := s.state.Route.AutoApply
 	s.mu.Unlock()
@@ -140,15 +129,6 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, e
 		cancel()
 		if err != nil {
 			s.noteSchedulerError(fmt.Errorf("账号自动指纹隔离路由同步失败：%w", err))
-		}
-	}
-	if needFinger {
-		if !active || s.routeHasHold(account) || s.VerifyLiveHold(account) {
-			// Preserve the existing after-third-failure risk classification.
-			// It is separate from the three samples used to grade this turn.
-			s.collectFingerprint(ctx, account, model)
-		} else {
-			s.noteSchedulerError(errors.New("生产路由未成功隔离，已停止指纹复核，等待路由修复"))
 		}
 	}
 }

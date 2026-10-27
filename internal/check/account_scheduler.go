@@ -8,9 +8,8 @@ import (
 )
 
 // ScheduleOneAccount has a single-flight guard across objective probes and
-// three-sample fingerprint checks. Persisted NextCheckAt does not reset on
-// process restarts. A pending fingerprint is prioritized ahead of healthy
-// hourly probes; an isolated account's held model is the only recovery target.
+// three-sample fingerprint-as-objective checks. Persisted NextCheckAt does not
+// reset on restarts; quarantined accounts only retest their held model.
 func (s *Service) ScheduleOneAccount(now time.Time) error {
 	return s.scheduleOneAccount(now, true)
 }
@@ -43,8 +42,6 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		account, model, prompt string
 		priority               int
 		due                    time.Time
-		pending                bool
-		periodicFingerprint    bool
 	}
 	candidates := []candidate{}
 	prompts := s.activeAccountPromptsLocked()
@@ -65,24 +62,9 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		if held && hold.Model != t.Model {
 			continue
 		}
-		if held && hold.Risk == "pending" {
-			// Retry after transient runtime errors without forgetting the hold.
-			if hold.NextCheckAt.IsZero() || !now.Before(hold.NextCheckAt) {
-				candidates = append(candidates, candidate{account: t.Account, model: t.Model, pending: true, priority: 0, due: hold.NextCheckAt})
-			}
-			continue
-		}
 		due := t.NextCheckAt
 		if held {
 			due = hold.NextCheckAt
-		}
-		if policy.FingerprintMode == FingerprintPeriodic && !held &&
-			t.State == "passed" && t.ConsecutiveFails == 0 &&
-			!t.NextFingerprintAt.IsZero() && !now.Before(t.NextFingerprintAt) {
-			candidates = append(candidates, candidate{
-				account: t.Account, model: t.Model, periodicFingerprint: true,
-				priority: 4, due: t.NextFingerprintAt,
-			})
 		}
 		if !due.IsZero() && now.Before(due) {
 			continue
@@ -117,28 +99,11 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		return a.model < b.model
 	})
 	next := candidates[0]
-	if next.pending {
-		return s.TriggerPendingFingerprint(next.account)
-	}
-	if next.periodicFingerprint {
-		return s.TriggerFingerprint(next.account, next.model, false)
-	}
 	return s.TriggerAccount(next.account, next.model, next.prompt, false)
 }
 func selectAutomaticPrompt(t AccountTarget, isolated, rotate bool, prompts []Prompt) string {
 	if len(prompts) == 0 {
 		return ""
-	}
-	if t.FingerprintExpected == "" && len(prompts) > 1 {
-		onlyConfigured := make([]Prompt, 0, len(prompts)-1)
-		for _, p := range prompts {
-			if p.ID != FingerprintPromptID {
-				onlyConfigured = append(onlyConfigured, p)
-			}
-		}
-		if len(onlyConfigured) > 0 {
-			prompts = onlyConfigured
-		}
 	}
 	if (isolated || t.ConsecutiveFails > 0) && t.LastAutoPrompt != "" {
 		for _, p := range prompts {
@@ -157,16 +122,20 @@ func (s *Service) StartAccountScheduler() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		tick := time.NewTicker(time.Minute)
-		defer tick.Stop()
 		// On startup, reconcile persisted holds against Magpie before probing.
-		s.schedulerTick(time.Now())
 		for {
+			s.schedulerTick(time.Now())
+			s.mu.Lock()
+			interval := s.state.TimingPolicy.scan()
+			s.mu.Unlock()
+			timer := time.NewTimer(interval)
 			select {
 			case <-s.ctx.Done():
+				timer.Stop()
 				return
-			case now := <-tick.C:
-				s.schedulerTick(now)
+			case <-s.scheduleWake:
+				timer.Stop()
+			case <-timer.C:
 			}
 		}
 	}()

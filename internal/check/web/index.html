@@ -19,7 +19,7 @@
       <div><span>监测账号</span><strong id="statAccounts">—</strong></div>
       <div><span>正常账号</span><strong id="statHealthy">—</strong></div>
       <div><span>隔离中</span><strong id="statIsolated">—</strong></div>
-      <div><span>待指纹复核</span><strong id="statPending">—</strong></div>
+      <div><span>疑似异常</span><strong id="statPending">—</strong></div>
     </section>
     <nav class="tabs" aria-label="控制台导航">
       <button data-tab="accounts" class="active">账号监测</button>
@@ -47,16 +47,13 @@
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
     <section id="rules" class="page" hidden>
-      <div class="section-head"><div><h1>检测题库</h1><p>手动与周期指纹仅记录结果；选择「作为客观题参与轮换」时，可靠的指纹偏离也可计入自动检测失败。</p></div></div>
+      <div class="section-head"><div><h1>检测题库</h1><p>普通客观题、自定义题连续 3 次有效错误直接隔离；指纹题完成 3 次采样后，只要一次可靠判定不一致就立即隔离。无额外指纹复核。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
         <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题（含指纹轮换模式）</label>
         <div class="fingerprint-policy">
-          <label class="check"><input type="checkbox" id="fingerprintAutomatic"> 模型指纹检测 · 参与自动检测</label>
-          <label>指纹自动触发时机
-            <select id="fingerprintMode"><option value="after_failures">客观题连续 3 次错误后复核（推荐）</option><option value="periodic_24h">异常复核 + 正常账号每 24 小时周期检测</option><option value="objective_rotation">作为自动客观题参与轮换（按指纹结果判分）</option></select>
-          </label>
-          <p class="hint">每轮指纹检测发送 3 次请求。新增「作为自动客观题参与轮换」为可选模式：一致=通过、强不一致=错误、采样不足/不可判=不可用；连续 3 次强不一致才可能触发隔离。请先在手动检测区域为每个监测目标保存预期指纹参考模型；没有预期模型时不发送自动指纹请求，也不累加失败。原有异常复核和 24 小时周期模式不变。</p>
+          <label class="check"><input type="checkbox" id="fingerprintAutomatic"> 将指纹检测加入自动客观题轮换</label>
+          <p class="hint">指纹题一轮采样 3 次上游请求，仅计一次判分：可靠不一致立即隔离。普通客观题需连续 3 次有效错误才隔离；采样失败或不可判定不计失败。指纹自动匹配当前检测模型的参考类别，不再有额外指纹复核。手动指纹只记录结果。</p>
         </div>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
       </div>
@@ -67,11 +64,12 @@
           <label>监测账号与模型<select id="manualTarget"><option value="">选择监测目标</option></select></label>
           <label>题目类型 / 检测题目<select id="manualPrompt"><option value="">选择客观题或指纹检测</option></select></label>
         </div>
-        <div id="fingerprintExpectation" class="fingerprint-policy" hidden>
-          <label>预期指纹参考模型（可按账号单独保存）<select id="fingerprintExpected"><option value="">自动匹配当前 Codex 模型</option></select></label>
-          <div class="actions-inline"><button id="saveFingerprintExpected" class="subtle">保存该账号的预期模型</button></div>
-          <p id="fingerprintModelHelp" class="hint">指纹评分是候选库内的相对判断，无法识别时显示「不可判」，不会当作回答错误。</p>
-        </div>
+        <details id="fingerprintExpectation" class="fingerprint-policy" hidden>
+          <summary>高级：手动覆盖指纹参考模型（默认自动匹配检测模型）</summary>
+          <label>预期指纹参考模型<select id="fingerprintExpected"><option value="">自动匹配检测模型</option></select></label>
+          <div class="actions-inline"><button id="saveFingerprintExpected" class="subtle">保存该监测目标的高级映射</button></div>
+          <p id="fingerprintModelHelp" class="hint">自动映射失败时，可手动选择参考模型；不支持的模型不会被判为错误。</p>
+        </details>
         <button id="runManualTest" class="primary">执行手动检测</button>
       </div>
       <div class="card form-card">
@@ -86,7 +84,7 @@
       </div>
     </section>
     <section id="history" class="page" hidden>
-      <div class="section-head"><div><h1>检测历史</h1><p>保留客观题回答、指纹采样及风险分级。概率只代表候选库内的相对排名。</p></div></div>
+      <div class="section-head"><div><h1>检测历史</h1><p>保留客观题回答、指纹采样、统一隔离与恢复记录。概率只代表候选库内的相对排名。</p></div></div>
       <div class="toolbar"><label>账号<select id="historyAccount"><option value="">全部账号</option></select></label></div>
       <div id="historyRows" class="history-list"></div>
     </section>
@@ -114,7 +112,26 @@
           <p class="hint">默认观察模式。隔离后检测 Key 保持允许，生产 Key 被限制。所有账号均异常时可能触发安全拒绝；不可将空白名单写作全量隔离。</p>
         </div>
       </div>
-      <div class="card small-card"><h2>固定策略</h2><p>正常账号每 30 分钟检测客观题，请求不可用时 30 分钟后重试，首次错误后 2 分钟复测。连续 3 次错误进入隔离流程；默认执行 3 轮指纹复核，关闭自动指纹则保守判为低风险。指纹明显异常时每 48 小时复测客观题；指纹正常或不可判时首次 6 小时，之后每 24 小时复测。连续两次客观题正确、间隔 2 分钟，解除隔离。单独手动与周期指纹结果不改变路由。</p></div>
+      <div class="card form-card" id="timingPolicyCard">
+        <h2>自动检测时间策略</h2>
+        <p class="hint">全局默认时间也可由单个监测目标覆盖。修改时间不会改变已有隔离状态、失败次数或恢复确认次数；默认不重算当前已安排的检测时间。</p>
+        <label>配置范围<select id="timingScope"><option value="">全局默认（全部监测目标继承）</option></select></label>
+        <label class="check"><input id="timingInherit" type="checkbox" checked disabled> 单个目标继承全局时间设置</label>
+        <div class="fields timing-fields">
+          <label>正常检测间隔<div class="timing-value"><input id="timingNormal" type="number" min="1"><select id="timingNormalUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="86400">天</option><option value="1">秒</option></select></div></label>
+          <label>错误复测间隔<div class="timing-value"><input id="timingSuspect" type="number" min="1"><select id="timingSuspectUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></div></label>
+          <label>隔离首次复测<div class="timing-value"><input id="timingFirst" type="number" min="1"><select id="timingFirstUnit"><option value="3600">小时</option><option value="86400">天</option><option value="60">分钟</option><option value="1">秒</option></select></div></label>
+          <label>隔离后续复测<div class="timing-value"><input id="timingRepeat" type="number" min="1"><select id="timingRepeatUnit"><option value="3600">小时</option><option value="86400">天</option><option value="60">分钟</option><option value="1">秒</option></select></div></label>
+          <label>恢复二次确认<div class="timing-value"><input id="timingRecovery" type="number" min="1"><select id="timingRecoveryUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></div></label>
+          <label>不可判定 / 请求失败重试<div class="timing-value"><input id="timingUnavailable" type="number" min="1"><select id="timingUnavailableUnit"><option value="60">分钟</option><option value="3600">小时</option><option value="1">秒</option></select></div></label>
+          <label>单次上游请求超时<div class="timing-value"><input id="timingTimeout" type="number" min="1"><select id="timingTimeoutUnit"><option value="1">秒</option><option value="60">分钟</option></select></div></label>
+          <label>后台扫描间隔（全局）<div class="timing-value"><input id="timingScan" type="number" min="1"><select id="timingScanUnit"><option value="1">秒</option><option value="60">分钟</option></select></div></label>
+        </div>
+        <label class="check"><input id="timingReschedule" type="checkbox"> 保存后重新计算尚未执行的检测时间（默认关闭）</label>
+        <div class="actions-inline"><button id="saveTiming" class="primary">保存检测时间</button><button id="resetTiming" class="subtle">填入默认时间</button></div>
+        <p class="hint" id="timingHelp">隔离复测计时持久化保存在数据库中，服务重启不会重置。时间设置必须通过服务端安全范围校验；每日上游请求预算仍然生效。</p>
+      </div>
+      <div class="card small-card"><h2>统一检测策略</h2><p>普通客观题连续 3 次有效错误隔离，指纹题一次可靠不一致立即隔离（3 次采样为 1 轮）；隔离后复测导致隔离的原题，连续 2 次正确恢复。不可判定和请求不可用不计错；所有检测时间可自定义。</p></div>
     </section>
   </main>
   <footer>Codex Guard · 独立插件开发版 · 仅管理通过所配置 Gateway Key 的业务流量</footer>

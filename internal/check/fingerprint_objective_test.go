@@ -57,7 +57,7 @@ func TestFingerprintObjectiveOptInAndQuestionRotation(t *testing.T) {
 	if len(s.state.AutoPromptPolicy.PromptIDs) != 0 {
 		t.Fatal("fingerprint-only mode was replaced with milk")
 	}
-	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintOnFailure); err != nil {
+	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintOff); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.activeAccountPromptsLocked()) != 1 {
@@ -73,9 +73,6 @@ func TestFingerprintObjectiveMatchIsSinglePassedCheckWithThreeSamples(t *testing
 	defer close()
 	fake := &fakeFingerprint{verdict: "match"}
 	s.fingerprint = fake
-	if err := s.configureTargetFingerprint("aaa", "codex/gpt-6.1-sol", "gpt-6-astra"); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.ConfigureDetectionPrompts([]string{"milk"}, true, FingerprintObjective); err != nil {
 		t.Fatal(err)
 	}
@@ -112,52 +109,38 @@ func TestFingerprintObjectiveMatchIsSinglePassedCheckWithThreeSamples(t *testing
 	_ = dir
 }
 
-func TestFingerprintObjectiveThreeStrongMismatchesCreateHighRiskHold(t *testing.T) {
+func TestFingerprintObjectiveOneReliableMismatchImmediatelyIsolates(t *testing.T) {
 	s, calls, close := fingerprintBankFixture(t)
 	defer close()
 	fake := &fakeFingerprint{verdict: "mismatch"}
 	s.fingerprint = fake
-	if err := s.configureTargetFingerprint("aaa", "codex/gpt-6.1-sol", "gpt-6-astra"); err != nil {
-		t.Fatal(err)
-	}
+	// No manual reference configuration is needed for a known detection model.
 	if err := s.ConfigureDetectionPrompts(nil, true, FingerprintObjective); err != nil {
 		t.Fatal(err)
 	}
 	s.state.Route.ScheduleEnabled = true
-	for n := 1; n <= 3; n++ {
-		target := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-		target.NextCheckAt = time.Time{}
-		if err := s.saveLocked(); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.ScheduleOneAccount(time.Now()); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
-		target = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-		if target.ConsecutiveFails != n {
-			t.Fatalf("after %d mismatches got failures=%d", n, target.ConsecutiveFails)
-		}
-		if n < 3 {
-			if target.State != PhaseSuspect {
-				t.Fatalf("failure %d not suspect: %+v", n, target)
-			}
-			if len(s.state.Holds) != 0 {
-				t.Fatal("fingerprint hold created before three failures")
-			}
-		}
+	target := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
+	target.NextCheckAt = time.Time{}
+	if err := s.saveLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ScheduleOneAccount(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.wg.Wait()
+	target = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
+	if target.State != PhaseIsolated || target.ConsecutiveFails != 1 {
+		t.Fatalf("single scored mismatch must immediately isolate: %+v", target)
 	}
 	hold, ok := s.state.Holds["aaa"]
-	if !ok || hold.Risk != "high" || hold.Fingerprint.Verdict != "mismatch" {
-		t.Fatalf("third strong mismatch did not enter normal high-risk classification: %+v", hold)
+	if !ok || hold.Risk != "isolated" || hold.Prompt != FingerprintPromptID {
+		t.Fatalf("one mismatch did not create unified hold: %+v", hold)
 	}
-	// 3 automatic question batches (9 requests) plus the existing
-	// post-third-failure risk confirmation (3 requests).
-	if calls.Load() != 12 || fake.call.Load() != 4 {
-		t.Fatalf("unexpected fingerprint count: upstream=%d eval=%d", calls.Load(), fake.call.Load())
+	if calls.Load() != 3 || fake.call.Load() != 1 {
+		t.Fatalf("one scored fingerprint turn should send 3 requests: upstream=%d eval=%d", calls.Load(), fake.call.Load())
 	}
-	if time.Until(hold.NextCheckAt) < 47*time.Hour {
-		t.Fatal("high risk recheck incorrectly scheduled")
+	if until := time.Until(hold.NextCheckAt); until < 5*time.Hour || until > 7*time.Hour {
+		t.Fatal("unified first recheck incorrectly scheduled")
 	}
 }
 
@@ -202,21 +185,26 @@ func TestFingerprintObjectiveIndeterminateAndIncompleteDoNotCountAsFailure(t *te
 	}
 }
 
-func TestFingerprintObjectiveWithoutExpectedModelIsUnscoredAndMakesNoCalls(t *testing.T) {
+func TestFingerprintObjectiveUnknownReferenceIsNeutralAndMakesNoCalls(t *testing.T) {
 	s, calls, close := fingerprintBankFixture(t)
 	defer close()
 	s.fingerprint = &fakeFingerprint{verdict: "mismatch"}
+	const model = "codex/not-in-reference"
+	original := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
+	delete(s.state.AccountTargets, accountTargetID("aaa", original.Model))
+	original.Model = model
+	s.state.AccountTargets[accountTargetID("aaa", model)] = original
 	if err := s.ConfigureDetectionPrompts(nil, true, FingerprintObjective); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, false); err != nil {
+	if err := s.TriggerAccount("aaa", model, FingerprintPromptID, false); err != nil {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
 	if calls.Load() != 0 {
 		t.Fatal("unknown reference model should not trigger requests")
 	}
-	target := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
+	target := s.state.AccountTargets[accountTargetID("aaa", model)]
 	if target.ConsecutiveFails != 0 || len(s.state.Holds) != 0 || target.State != "unavailable" {
 		t.Fatalf("missing reference was treated as wrong: %+v", target)
 	}
@@ -253,7 +241,7 @@ func TestFingerprintObjectiveModePersistsAndPreservesExistingHolds(t *testing.T)
 	if reopened.AutoPromptSettings().FingerprintMode != FingerprintObjective {
 		t.Fatal("mode not persisted")
 	}
-	if reopened.state.Holds["aaa"].Risk != "high" {
+	if reopened.state.Holds["aaa"].Risk != "isolated" {
 		t.Fatal("hold lost on restart")
 	}
 }
@@ -283,17 +271,15 @@ func TestFingerprintObjectiveProductionRoutingAndRecovery(t *testing.T) {
 	if err := s.ConfigureDetectionPrompts(nil, true, FingerprintObjective); err != nil {
 		t.Fatal(err)
 	}
-	for n := 0; n < 3; n++ {
-		if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, false); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
+	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, false); err != nil {
+		t.Fatal(err)
 	}
-	if requests.Load() != 12 {
-		t.Fatalf("3 scored rounds plus quarantine confirmation expected 12 samples: %d", requests.Load())
+	s.wg.Wait()
+	if requests.Load() != 3 {
+		t.Fatalf("one scored round must use 3 samples without extra review: %d", requests.Load())
 	}
-	if h := s.state.Holds["aaa"]; h.Risk != "high" {
-		t.Fatalf("high-risk hold not created: %+v", h)
+	if h := s.state.Holds["aaa"]; h.Risk != "isolated" {
+		t.Fatalf("unified hold not created: %+v", h)
 	}
 	keys := decodeKeyStates(t, path)
 	if !reflect.DeepEqual(keys["production"].Accounts, []string{"codex/bbb"}) {

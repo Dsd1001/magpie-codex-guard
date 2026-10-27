@@ -2,13 +2,13 @@ package check
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Dsd1001/magpie-codex-guard/internal/fingerprint"
 )
 
-// FingerprintModelOption exposes only public labels from the pinned local
-// reference library. It never contains account credentials or raw samples.
+// FingerprintModelOption exposes only public labels from the local reference bank.
 type FingerprintModelOption struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -26,9 +26,27 @@ func FingerprintModelCatalog() ([]FingerprintModelOption, error) {
 	return out, nil
 }
 
-// TriggerFingerprint is separate from objective grading. In manual/periodic
-// modes, the result never modifies quarantine, recovery, or Gateway Key routing.
+func resolveFingerprintReference(model, override string) (string, error) {
+	d, err := fingerprint.Load()
+	if err != nil {
+		return "", errors.New("模型指纹参考库加载失败")
+	}
+	expected := model
+	if override != "" {
+		expected = override
+	}
+	if id, supported := d.ResolveExpected(expected); supported {
+		return id, nil
+	}
+	return "", fmt.Errorf("模型 %s 无法自动匹配指纹参考库，请核对模型或设置高级参考映射", expected)
+}
+
+// Manual fingerprint checks never change automatic counts, holds or routing.
+// There is no standalone periodic or after-failure fingerprint job.
 func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
+	if !manual {
+		return errors.New("独立的自动指纹检测已移除；请将指纹题加入自动客观题")
+	}
 	if err := ValidateAccount(account); err != nil {
 		return err
 	}
@@ -45,28 +63,11 @@ func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
 		s.mu.Unlock()
 		return errors.New("已有检测正在执行")
 	}
-	if !manual {
-		if s.effectiveAutoPromptPolicyLocked().FingerprintMode != FingerprintPeriodic {
-			s.mu.Unlock()
-			return errors.New("自动周期指纹检测未开启")
-		}
-		if _, held := s.state.Holds[account]; held {
-			s.mu.Unlock()
-			return errors.New("隔离中的账号不能运行周期指纹检测")
-		}
-		if target.State != "passed" || target.ConsecutiveFails != 0 {
-			s.mu.Unlock()
-			return errors.New("周期指纹只对客观题正常的账号执行")
-		}
-	}
 	if s.state.Config.GatewayURL == "" || s.state.Config.GatewayKey == "" {
 		s.mu.Unlock()
 		return errors.New("专用检测 Gateway Key 未配置")
 	}
-	expected := model
-	if target.FingerprintExpected != "" {
-		expected = target.FingerprintExpected
-	}
+	expected, refErr := resolveFingerprintReference(model, target.FingerprintExpected)
 	runner := s.fingerprint
 	s.accountProbeActive = true
 	s.wg.Add(1)
@@ -74,26 +75,21 @@ func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
 	go func() {
 		defer s.wg.Done()
 		defer func() { s.mu.Lock(); s.accountProbeActive = false; s.mu.Unlock() }()
-		report, batch := s.sampleFingerprint(s.ctx, account, model, expected, runner)
-		now := time.Now()
-		name := "手动模型指纹检测"
-		if !manual {
-			name = "周期性模型指纹检测"
+		var report FingerprintReport
+		var batch string
+		if refErr != nil {
+			report = FingerprintReport{Verdict: "indeterminate", Diagnostic: refErr.Error()}
+		} else {
+			report, batch = s.sampleFingerprint(s.ctx, account, model, expected, runner)
 		}
+		now := time.Now()
 		result := AccountResult{
 			ID: Secret()[:12], Batch: batch, Account: account, Model: model,
-			Prompt: FingerprintPromptID, PromptName: name, Verdict: report.Verdict,
-			Time: now, Fingerprint: &report,
+			Prompt: FingerprintPromptID, PromptName: "手动模型指纹检测",
+			Verdict: report.Verdict, Time: now, Fingerprint: &report,
 		}
 		s.mu.Lock()
 		s.addResult(result)
-		if !manual {
-			if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil {
-				t.LastFingerprintAt = now
-				t.NextFingerprintAt = now.Add(24 * time.Hour)
-				t.FingerprintVersion = report.Version
-			}
-		}
 		if err := s.store.Save(s.state); err != nil {
 			s.health = err.Error()
 		}

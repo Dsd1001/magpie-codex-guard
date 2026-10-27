@@ -176,14 +176,12 @@ func TestAPIUpstreamFingerprintIsolationRecoveryAndPersistence(t *testing.T) {
 	}
 	fake := &fakeFingerprint{verdict: "mismatch"}
 	s.fingerprint = fake
-	for i := 0; i < 3; i++ {
-		if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
+	if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
+		t.Fatal(err)
 	}
-	if calls != 12 || s.state.Holds[id].Risk != "high" {
-		t.Fatalf("missing full three-failure and review sequence: %d %+v", calls, s.state.Holds[id])
+	s.wg.Wait()
+	if calls != 3 || s.state.Holds[id].Risk != "isolated" {
+		t.Fatalf("single fingerprint mismatch must quarantine after 3 samples: %d %+v", calls, s.state.Holds[id])
 	}
 	keys := decodeKeyStates(t, path)
 	if !slices.Equal(keys["production"].Models, []string{"codex/*", "cybersol/*"}) || keys["production"].Off {
@@ -199,7 +197,7 @@ func TestAPIUpstreamFingerprintIsolationRecoveryAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.state.Holds[id].Risk != "high" {
+	if reopened.state.Holds[id].Risk != "isolated" {
 		t.Fatal("restart lost API hold")
 	}
 	reopened.Close()

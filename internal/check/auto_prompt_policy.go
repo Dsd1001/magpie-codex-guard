@@ -24,10 +24,11 @@ const (
 )
 
 func effectiveFingerprintMode(mode string) string {
-	if mode == "" {
-		return FingerprintOnFailure
+	if mode == FingerprintObjective {
+		return FingerprintObjective
 	}
-	return mode
+	// Old periodic/after-failure modes never silently activate on upgrade.
+	return FingerprintOff
 }
 
 func (s *Service) eligibleAutoPromptsLocked() []Prompt {
@@ -120,14 +121,14 @@ func (s *Service) resetAutoPromptStreaksLocked() map[string]AccountTarget {
 // ConfigureAutoPrompts validates every selected ID server-side. Manual-only,
 // deleted or malformed questions can never enter the automatic quarantine
 // scheduler even when a client bypasses the browser UI.
-// ConfigureAutoPrompts retains compatibility with callers that only change
-// objective questions. They never silently disable fingerprint quarantine.
+// ConfigureAutoPrompts retains compatibility with clients that only
+// configure ordinary objective questions.
 func (s *Service) ConfigureAutoPrompts(ids []string, rotate bool) error {
 	return s.ConfigureDetectionPrompts(ids, rotate, "")
 }
 
-// The new objective_rotation mode is opt-in. Other fingerprint modes remain
-// independent of objective grading and preserve their prior schedules.
+// Fingerprints can only participate as normal scored objective questions.
+// Standalone periodic or post-failure review modes have been retired.
 func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerprintMode string) error {
 
 	s.mu.Lock()
@@ -139,8 +140,8 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 	if fingerprintMode == "" {
 		fingerprintMode = current.FingerprintMode
 	}
-	if fingerprintMode != FingerprintOnFailure && fingerprintMode != FingerprintPeriodic && fingerprintMode != FingerprintObjective && fingerprintMode != FingerprintOff {
-		return errors.New("无效的指纹检测触发模式")
+	if fingerprintMode != FingerprintObjective && fingerprintMode != FingerprintOff {
+		return errors.New("指纹只能作为自动客观题参与轮换或关闭")
 	}
 	available := s.eligibleAutoPromptsLocked()
 	if len(ids) == 0 && fingerprintMode != FingerprintObjective {
@@ -148,6 +149,25 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 	}
 	if fingerprintMode == FingerprintObjective && len(ids) > 0 && !rotate {
 		return errors.New("指纹参与客观题轮换时，请开启按轮次轮换")
+	}
+	// A held account must continue recovering with its original question.
+	// Refuse question-bank edits that would orphan an active isolation.
+	for _, hold := range s.state.Holds {
+		prompt := hold.Prompt
+		if prompt == "" {
+			for _, t := range s.state.AccountTargets {
+				if t != nil && t.Account == hold.Account && t.Model == hold.Model {
+					prompt = t.LastAutoPrompt
+					break
+				}
+			}
+		}
+		if prompt == FingerprintPromptID && fingerprintMode != FingerprintObjective {
+			return errors.New("已有账号因指纹题隔离，恢复之前不能停用指纹题")
+		}
+		if prompt != "" && prompt != FingerprintPromptID && !slices.Contains(ids, prompt) {
+			return errors.New("已有账号正在隔离复测，不能删除其原检测题")
+		}
 	}
 	if len(ids) > len(available) {
 		return errors.New("自动检测题库包含重复或不可用的题目")
@@ -189,16 +209,6 @@ func (s *Service) ConfigureDetectionPrompts(ids []string, rotate bool, fingerpri
 		}
 	}
 	s.state.AutoPromptPolicy = desired
-	// Enabling a periodic job does not cause an immediate burst of 3 requests
-	// per target. It becomes due after 24 hours, persisted across restarts.
-	if fingerprintChanged && desired.FingerprintMode == FingerprintPeriodic {
-		next := time.Now().Add(24 * time.Hour)
-		for _, t := range s.state.AccountTargets {
-			if t != nil {
-				t.NextFingerprintAt = next
-			}
-		}
-	}
 	if err := s.store.Save(s.state); err != nil {
 		s.state.AutoPromptPolicy = before
 		s.restoreTargetsLocked(targets)

@@ -81,3 +81,15 @@ footer{text-align:center;font-size:12px;color:var(--muted);border-top:1px solid 
 .fingerprint-policy[hidden]{display:none!important}
 .manual-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
 @media(max-width:660px){.manual-fields{grid-template-columns:1fr}}
+
+/* Unified objective probes with editable global/per-target time policies. */
+.timing-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+.timing-value{display:flex;align-items:center;gap:8px;margin-top:5px}
+.timing-value input{min-width:0;flex:1 1 auto}
+.timing-value select{width:86px;flex:0 0 86px}
+.timing-value input:disabled,.timing-value select:disabled{opacity:.58}
+details.fingerprint-policy{display:block}
+details.fingerprint-policy summary{cursor:pointer;font-weight:600}
+details.fingerprint-policy[open] label{display:block;margin-top:14px}
+details.fingerprint-policy[open] .actions-inline{margin-top:10px}
+@media(max-width:660px){.timing-fields{grid-template-columns:1fr}}

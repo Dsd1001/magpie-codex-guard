@@ -3,7 +3,6 @@ package check
 import (
 	"errors"
 	"sort"
-	"time"
 )
 
 // AccountRosterSync describes a safe, credential-free monitoring update.
@@ -97,9 +96,6 @@ func (s *Service) SyncLiveAccountTargets() (AccountRosterSync, error) {
 			}
 			t := &AccountTarget{
 				Account: a.ID, Model: model, Enabled: true, State: "unverified",
-			}
-			if s.effectiveAutoPromptPolicyLocked().FingerprintMode == FingerprintPeriodic {
-				t.NextFingerprintAt = time.Now().Add(24 * time.Hour)
 			}
 			s.state.AccountTargets[id] = t
 			result.Added++

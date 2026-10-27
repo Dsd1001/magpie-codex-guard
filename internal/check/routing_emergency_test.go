@@ -210,10 +210,9 @@ func TestManualRestoreClearsEmergencyDisabledKeys(t *testing.T) {
 	}
 }
 
-// A failed fingerprint HTTP response must NOT become a high-risk identity
-// mismatch; the account is still isolated for six hours due to three
-// objective failures. All four requests are charged to the daily budget.
-func TestFingerprintRequestFailureIsLowRisk(t *testing.T) {
+// Three ordinary objective failures isolate immediately, without spending
+// a fourth request on a separate fingerprint review.
+func TestOrdinaryThreeFailuresIsolateWithoutFingerprintRequest(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	var calls atomic.Int32
@@ -251,24 +250,24 @@ func TestFingerprintRequestFailureIsLowRisk(t *testing.T) {
 		s.wg.Wait()
 	}
 	hold, ok := s.state.Holds["aaa"]
-	if !ok || hold.Risk != "low" || hold.Fingerprint.Verdict != "indeterminate" {
-		t.Fatalf("incomplete samples should be low-risk: %+v", hold)
+	if !ok || hold.Risk != "isolated" || hold.Prompt != "milk" {
+		t.Fatalf("ordinary objective failures should create unified hold: %+v", hold)
 	}
 	if got := time.Until(hold.NextCheckAt); got < 5*time.Hour || got > 7*time.Hour {
 		t.Fatalf("first retry should be 6h: %s", got)
 	}
-	if hold.Fingerprint.Version != "test-bank-v1" {
-		t.Fatalf("fingerprint version was lost: %+v", hold.Fingerprint)
+	if fake.call.Load() != 0 {
+		t.Fatalf("unexpected standalone fingerprint review: %d", fake.call.Load())
 	}
-	if calls.Load() != 4 {
-		t.Fatalf("expected 3 objective and 1 rejected fingerprint request, got %d", calls.Load())
+	if calls.Load() != 3 {
+		t.Fatalf("expected exactly 3 objective requests, got %d", calls.Load())
 	}
 	day := time.Now().UTC().Format("2006-01-02")
-	if s.state.Spent[day] != 4 {
+	if s.state.Spent[day] != 3 {
 		t.Fatalf("daily budget incorrectly charged %d", s.state.Spent[day])
 	}
 	keys := decodeKeyStates(t, path)
 	if keys["production"].Off || !reflect.DeepEqual(keys["production"].Accounts, []string{"codex/bbb"}) {
-		t.Fatalf("failed fingerprint unexpectedly released quarantine: %+v", keys["production"])
+		t.Fatalf("ordinary isolation did not exclude quarantined account: %+v", keys["production"])
 	}
 }
