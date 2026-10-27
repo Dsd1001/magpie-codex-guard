@@ -337,6 +337,7 @@ test('time policy edits persist global defaults and per-target overrides without
   w.document.querySelector('#saveTiming').click();
   await waitFor(()=>state.state.timing_policy.normal_seconds===2700);
   assert.equal(JSON.parse(calls.findLast(c=>c.path==='/api/timing').options.body).reschedule,false);
+  await waitFor(()=>w.document.querySelector('#notice').textContent==='操作已完成');
   w.document.querySelector('#accountSelect').value='aaa';
   w.document.querySelector('#modelSelect').value='codex/gpt-6.1-sol';
   w.document.querySelector('#addAccount').click();
