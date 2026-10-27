@@ -1,4 +1,5 @@
 name: Build Codex Guard Alpha Release
+# CI includes browser DOM smoke tests for unified timing settings.
 on:
   push:
     branches: [main]
