@@ -1,5 +1,5 @@
 name: Build Codex Guard Alpha Release
-# CI includes browser DOM smoke tests for unified timing settings.
+# CI also checks per-target timing settings with a deterministic enrolled-target fixture.
 on:
   push:
     branches: [main]

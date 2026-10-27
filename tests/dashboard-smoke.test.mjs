@@ -338,9 +338,12 @@ test('time policy edits persist global defaults and per-target overrides without
   await waitFor(()=>state.state.timing_policy.normal_seconds===2700);
   assert.equal(JSON.parse(calls.findLast(c=>c.path==='/api/timing').options.body).reschedule,false);
   await waitFor(()=>w.document.querySelector('#notice').textContent==='操作已完成');
-  w.document.querySelector('#accountSelect').value='aaa';
-  w.document.querySelector('#modelSelect').value='codex/gpt-6.1-sol';
-  w.document.querySelector('#addAccount').click();
+  // Separate add-account behavior is covered above; inject an enrolled target
+  // here so this test isolates timing-policy form behavior from async model loading.
+  state.state.account_targets['aaa\x1fcodex/gpt-6.1-sol']={
+   account:'aaa',model:'codex/gpt-6.1-sol',enabled:true,state:'passed'
+  };
+  w.document.querySelector('#refresh').click();
   await waitFor(()=>w.document.querySelector('#timingScope option').length>1);
   w.document.querySelector('#timingScope').value='aaa\x1fcodex/gpt-6.1-sol';
   w.document.querySelector('#timingScope').dispatchEvent(new w.Event('change'));
