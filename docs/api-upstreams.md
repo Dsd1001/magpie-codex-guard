@@ -66,8 +66,9 @@ tests cover single, multiple, disabled and duplicate saved keys.
 ## Packaging
 
 Build and install a package containing the updated helper with
-`npm run build:release`. A source-only `github:` installation still downloads
-the existing SHA-pinned alpha.16 helper. The runtime pin must be updated in a
-follow-up installer release after the new immutable backend artifacts exist;
-the old helper does not implement API enrollment. No integrity checks are
-removed by this change.
+`npm run build:release`. A source-only `github:` installation with plugin alpha.19 downloads the
+SHA-256-pinned alpha.18 helper, which includes API enrollment and provider
+quarantine. The alpha.19 Release package bundles rebuilt binaries. Both
+installation methods support API monitoring; future installer updates must
+pin an existing, immutable, verified backend Release. No integrity checks
+are removed by this change.

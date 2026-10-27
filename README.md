@@ -6,7 +6,7 @@
 
 Codex Guard 按 **Codex 登录账号** 检测：使用独立检测 Key 通过客观题与模型指纹采样自动检测降智，并自动将风险账号从生产 Gateway Key 的调用清单中排除。它**不会删除账号或修改 OAuth 凭证**，也不是新的模型供应商。
 
-**当前插件版本：** `0.1.0-alpha.17`（对应已校验的 Go 后端 `v0.1.0-alpha.16`）。目前仍属开发测试版本，请先验证检测准确性，再开启生产路由自动隔离。
+**当前插件版本：** `0.1.0-alpha.19`（GitHub 源码安装固定校验并下载 `v0.1.0-alpha.18` Go 后端；alpha.19 Release 完整包内含预编译后端）。目前仍属开发测试版本，请先验证检测准确性，再开启生产路由自动隔离。
 
 ## 快速安装
 
@@ -144,7 +144,7 @@ Magpie 的 Gateway Key 账号白名单遵循 **“空列表允许全部账号”
 
 ## 直接在 Magpie 中安装（GitHub）
 
-**版本说明：** 当前插件为 `0.1.0-alpha.17`，固定 SHA-256 校验 `v0.1.0-alpha.16` Go 后端。新增指纹自动触发时机「作为自动客观题参与轮换」：强不一致才记为一次失败、无法判定不计失败。默认及旧有检测/隔离配置保持不变；选择新模式后请按监测目标设置预期参考模型，并先验证实际账号结果。插件版本与后端 Release 不同是预期行为，升级后请重新打开临时管理控制台。
+**版本说明：** 当前插件为 `0.1.0-alpha.19`。修复 GitHub 源码安装器的后端版本滞后：现在固定 SHA-256 校验 `v0.1.0-alpha.18` Go 后端，支持 Codex 账号检测、指纹作为自动题目，以及新加入的 API 上游监测与隔离。alpha.19 Release 完整包包含重新构建的后端程序；源码安装的后端 Release 与插件版本不同是预期行为。已有配置及隔离状态不应被版本升级自动清空；升级后请重新打开临时管理控制台，并核对当前路由配置。
 
 在 **Magpie → 设置 → 插件** 页面底部的「已有想装的？」输入框中粘贴：
 
@@ -158,7 +158,7 @@ github:Dsd1001/magpie-codex-guard
 magpie plugin add github:Dsd1001/magpie-codex-guard
 ```
 
-**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件会在首次启动时从 [v0.1.0-alpha.16 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.16) 自动下载所需的预编译程序，校验安装包及可执行文件的固定 SHA-256 后缓存到独立数据目录。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** `alpha.16` 的三个 Go 二进制与 Release 安装包均固定 SHA-256；更新插件后会自动使用独立的新缓存目录，不再沿用旧 `alpha.14` 后端。
+**不需要**手工下载 Release、执行 Go 构建或运行 npm。Magpie 通过 Bun 获取 GitHub 仓库，且不会执行包的安装脚本；本插件在首次启动时从 [v0.1.0-alpha.18 Release](https://github.com/Dsd1001/magpie-codex-guard/releases/tag/v0.1.0-alpha.18) 下载所需的预编译程序，对安装包以及三个平台二进制分别校验固定 SHA-256，之后缓存在按后端版本隔离的数据目录中。后续启动直接复用缓存。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，其他平台目前不受支持。**首次启动必须能访问 GitHub Release 下载地址，且容器内需要 `tar`。** 此处使用已经发布并校验的 alpha.18 后端，是为了避免源码安装器依赖尚未发布的 Release；直接安装 alpha.19 Release 完整包时则使用包内的后端程序。
 
 **生产环境警告：** 安装不等于立即启用自动隔离；应先保持观察模式，不要让旧版与新版同时写入生产 Gateway Key。需要配置独立的检测 Gateway Key 并完成真实账号安全校验后，才能手动启用自动路由。
 

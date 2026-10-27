@@ -53,4 +53,4 @@ jobs:
             exit 1
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.18 backend: explicitly enrolled API upstream probes, provider quarantine and recovery, and 30-minute healthy/unavailable checks. Bundled helpers contain the new backend; source-only installer pins need a follow-up release."
+          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$GITHUB_SHA" --title "$TAG" --prerelease --notes "Codex Guard alpha.19: source-only GitHub installer now downloads verified alpha.18 backend with fixed SHA-256 checks; Release package bundles updated backend binaries with Codex and API upstream monitoring and quarantine."
