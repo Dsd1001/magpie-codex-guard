@@ -57,8 +57,8 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		}
 		hold, held := s.state.Holds[t.Account]
 		if !allowNewHolds && !held {
-			// An unavailable check now creates an immediate hold, so no
-			// unheld target may run while routing cannot safely isolate.
+			// A reliable mismatch can create a hold, so no unheld target
+			// may run while routing cannot safely isolate.
 			continue
 		}
 		if held && hold.Model != t.Model {
@@ -78,7 +78,7 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 			if hold.ConfirmationPasses > 0 {
 				priority = 0
 			}
-		} else if t.ConsecutiveFails > 0 {
+		} else if t.ConsecutiveFails > 0 || t.ConsecutiveUnavailable > 0 {
 			priority = 1
 		}
 		candidates = append(candidates, candidate{account: t.Account, model: t.Model, prompt: prompt, due: due, priority: priority})

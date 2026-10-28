@@ -110,7 +110,7 @@ func TestFingerprintObjectiveMatchIsSinglePassedCheckWithThreeSamples(t *testing
 	_ = dir
 }
 
-func TestFingerprintObjectiveOneReliableMismatchImmediatelyIsolates(t *testing.T) {
+func TestFingerprintObjectiveThreeMismatchRoundsIsolate(t *testing.T) {
 	s, calls, close := fingerprintBankFixture(t)
 	defer close()
 	fake := &fakeFingerprint{verdict: "mismatch"}
@@ -130,15 +130,24 @@ func TestFingerprintObjectiveOneReliableMismatchImmediatelyIsolates(t *testing.T
 	}
 	s.wg.Wait()
 	target = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	if target.State != PhaseIsolated || target.ConsecutiveFails != 1 {
-		t.Fatalf("single scored mismatch must immediately isolate: %+v", target)
+	if target.State != PhaseSuspect || target.ConsecutiveFails != 1 || len(s.state.Holds) != 0 {
+		t.Fatalf("first mismatch must retry: %+v", target)
+	}
+	for n := 0; n < 2; n++ {
+		if err := s.ScheduleOneAccount(target.NextCheckAt); err != nil {
+			t.Fatal(err)
+		}
+		s.wg.Wait()
+	}
+	if target.State != PhaseIsolated || target.ConsecutiveFails != 3 {
+		t.Fatalf("three scored mismatches must isolate: %+v", target)
 	}
 	hold, ok := s.state.Holds["aaa"]
 	if !ok || hold.Risk != "isolated" || hold.Prompt != FingerprintPromptID {
 		t.Fatalf("one mismatch did not create unified hold: %+v", hold)
 	}
-	if calls.Load() != 3 || fake.call.Load() != 1 {
-		t.Fatalf("one scored fingerprint turn should send 3 requests: upstream=%d eval=%d", calls.Load(), fake.call.Load())
+	if calls.Load() != 9 || fake.call.Load() != 3 {
+		t.Fatalf("three scored rounds should send 9 requests: upstream=%d eval=%d", calls.Load(), fake.call.Load())
 	}
 	if until := time.Until(hold.NextCheckAt); until < 5*time.Hour || until > 7*time.Hour {
 		t.Fatal("unified first recheck incorrectly scheduled")
@@ -172,7 +181,7 @@ func TestFingerprintObjectiveIndeterminateAndIncompleteDoNotCountAsFailure(t *te
 			}
 			s.wg.Wait()
 			target = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-			if target.ConsecutiveFails != 2 || target.State != PhaseIsolated || s.state.Holds["aaa"].Cause != "unavailable" {
+			if target.ConsecutiveFails != 2 || target.State != "unavailable" || len(s.state.Holds) != 0 {
 				t.Fatalf("uncertain fingerprint incorrectly changed state: %+v", target)
 			}
 			final := s.state.AccountResults[len(s.state.AccountResults)-1]
@@ -206,7 +215,7 @@ func TestFingerprintObjectiveUnknownReferenceIsNeutralAndMakesNoCalls(t *testing
 		t.Fatal("unknown reference model should not trigger requests")
 	}
 	target := s.state.AccountTargets[accountTargetID("aaa", model)]
-	if target.ConsecutiveFails != 0 || s.state.Holds["aaa"].Cause != "unavailable" || target.State != PhaseIsolated {
+	if target.ConsecutiveFails != 0 || len(s.state.Holds) != 0 || target.State != "unavailable" {
 		t.Fatalf("missing reference was treated as wrong: %+v", target)
 	}
 	result := s.state.AccountResults[len(s.state.AccountResults)-1]
@@ -278,6 +287,15 @@ func TestFingerprintObjectiveProductionRoutingAndRecovery(t *testing.T) {
 	s.wg.Wait()
 	if requests.Load() != 3 {
 		t.Fatalf("one scored round must use 3 samples without extra review: %d", requests.Load())
+	}
+	if len(s.state.Holds) != 0 || len(decodeKeyStates(t, path)["production"].Accounts) != 0 {
+		t.Fatal("first mismatch changed production access")
+	}
+	for n := 0; n < 2; n++ {
+		if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, false); err != nil {
+			t.Fatal(err)
+		}
+		s.wg.Wait()
 	}
 	if h := s.state.Holds["aaa"]; h.Risk != "isolated" {
 		t.Fatalf("unified hold not created: %+v", h)
