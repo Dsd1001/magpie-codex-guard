@@ -37,13 +37,17 @@ func TestDifferentObjectivePromptDoesNotAccumulateFailures(t *testing.T) {
 	}
 }
 
-func TestFingerprintOneCompleteMismatchImmediatelyIsolates(t *testing.T) {
+func TestFingerprintRequiresThreeCompleteMismatchRounds(t *testing.T) {
 	now := time.Now()
 	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
-	create, release := objectiveTransition(target, nil, "failed", FingerprintPromptID, now)
-	if !create || release || target.State != PhaseIsolated || target.ConsecutiveFails != 1 {
-		t.Fatalf("fingerprint mismatch did not isolate on one scored turn: %+v", target)
+	for n := 1; n <= 3; n++ {
+		create, release := objectiveTransition(target, nil, "failed", FingerprintPromptID, now)
+		if create != (n == 3) || release || target.ConsecutiveFails != n {
+			t.Fatalf("wrong fingerprint threshold at round %d: %+v", n, target)
+		}
+		now = target.NextCheckAt
 	}
+
 	hold := startHold(*target, now)
 	if hold.Prompt != FingerprintPromptID || hold.Risk != "isolated" {
 		t.Fatalf("fingerprint hold incorrect: %+v", hold)
@@ -96,41 +100,47 @@ func TestIndeterminateFingerprintRemainsUnavailableVerdict(t *testing.T) {
 	}
 }
 
-func TestUnavailableAutomaticCheckCreatesHoldWithoutFalseAnswerCount(t *testing.T) {
+func TestUnavailableAutomaticCheckRetriesWithoutHold(t *testing.T) {
 	now := time.Date(2026, 10, 27, 6, 0, 0, 0, time.UTC)
-	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol", Enabled: true, State: PhaseHealthy}
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol", Enabled: true, State: PhaseHealthy, LastAutoPrompt: "milk", ConsecutiveFails: 2}
 	timing := DefaultTimingPolicy()
 	timing.UnavailableSeconds = 90
-	create, release := objectiveTransitionWithTiming(target, nil, "unavailable", "milk", now, timing)
-	if !create || release || target.State != PhaseIsolated || target.ConsecutiveFails != 0 || target.LastAutoPrompt != "milk" {
-		t.Fatalf("unavailable automatic check must isolate without scoring an incorrect answer: %+v", target)
-	}
-	hold := startHoldWithTiming(*target, now, timing)
-	if hold.Cause != "unavailable" || !hold.NextCheckAt.Equal(now.Add(90*time.Second)) {
-		t.Fatalf("unavailable hold must use customized retry interval: %+v", hold)
-	}
-	_, release = objectiveTransitionWithTiming(target, &hold, "unavailable", "milk", hold.NextCheckAt, timing)
-	if release || hold.ConfirmationPasses != 0 {
-		t.Fatal("second unavailable check must not release hold")
-	}
-	for n := 1; n <= 2; n++ {
-		_, release = objectiveTransitionWithTiming(target, &hold, "passed", "milk", hold.NextCheckAt, timing)
-		if release != (n == 2) {
-			t.Fatalf("recovery requires two valid passes, n=%d release=%v", n, release)
+	for n := 0; n < 2; n++ {
+		create, release := objectiveTransitionWithTiming(target, nil, "unavailable", FingerprintPromptID, now, timing)
+		if create || release || target.State != "unavailable" || target.ConsecutiveFails != 2 || target.LastAutoPrompt != "milk" || !target.NextCheckAt.Equal(now.Add(90*time.Second)) {
+			t.Fatalf("unavailable check changed isolation or evidence: %+v", target)
 		}
+		now = target.NextCheckAt
+	}
+	create, _ := objectiveTransitionWithTiming(target, nil, "passed", "milk", now, timing)
+	if create || target.State != PhaseHealthy || target.ConsecutiveFails != 0 || target.ConsecutiveUnavailable != 0 {
+		t.Fatalf("valid retry did not recover: %+v", target)
 	}
 }
 
-func TestUnavailableFingerprintIsolatesWithoutCountingMismatch(t *testing.T) {
+func TestUnavailableFingerprintRetriesWithoutCountingMismatch(t *testing.T) {
 	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
 	now := time.Now()
 	report := FingerprintReport{Verdict: "indeterminate", UsedOutputs: 2}
 	verdict := fingerprintAsObjectiveVerdict(report, "gpt-6-astra")
-	if verdict != "unavailable" {
-		t.Fatalf("unexpected fingerprint verdict: %s", verdict)
-	}
 	create, _ := objectiveTransition(target, nil, verdict, FingerprintPromptID, now)
-	if !create || target.ConsecutiveFails != 0 || target.State != PhaseIsolated {
-		t.Fatalf("inconclusive fingerprint must isolate without mismatch count: %+v", target)
+	if create || target.ConsecutiveFails != 0 || target.State != "unavailable" || !target.NextCheckAt.Equal(now.Add(UnavailableInterval)) {
+		t.Fatalf("inconclusive fingerprint must retry without isolation: %+v", target)
+	}
+}
+
+func TestThreeUnavailableRoundsIsolateAfterRetries(t *testing.T) {
+	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-terra"}
+	now := time.Now()
+	for n := 1; n <= 3; n++ {
+		create, _ := objectiveTransition(target, nil, "unavailable", FingerprintPromptID, now)
+		if create != (n == 3) || target.ConsecutiveUnavailable != n || target.ConsecutiveFails != 0 {
+			t.Fatalf("bad unavailable retry threshold n=%d: %+v", n, target)
+		}
+		now = target.NextCheckAt
+	}
+	hold := startHold(*target, now)
+	if hold.Cause != "unavailable" {
+		t.Fatalf("missing unavailable cause: %+v", hold)
 	}
 }

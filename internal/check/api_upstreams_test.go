@@ -180,8 +180,17 @@ func TestAPIUpstreamFingerprintIsolationRecoveryAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
-	if calls != 3 || s.state.Holds[id].Risk != "isolated" {
-		t.Fatalf("single fingerprint mismatch must quarantine after 3 samples: %d %+v", calls, s.state.Holds[id])
+	if len(s.state.Holds) != 0 || len(decodeKeyStates(t, path)["production"].Models) != 0 {
+		t.Fatal("first API mismatch changed production scope")
+	}
+	for n := 0; n < 2; n++ {
+		if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
+			t.Fatal(err)
+		}
+		s.wg.Wait()
+	}
+	if calls != 9 || s.state.Holds[id].Risk != "isolated" {
+		t.Fatalf("three fingerprint mismatch rounds must quarantine after 9 samples: %d %+v", calls, s.state.Holds[id])
 	}
 	keys := decodeKeyStates(t, path)
 	if !slices.Equal(keys["production"].Models, []string{"codex/*", "cybersol/*"}) || keys["production"].Off {
@@ -233,8 +242,8 @@ func TestAPIUnavailableAndScopeConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
-	if s.state.Holds[id].Cause != "unavailable" || s.state.AccountTargets[accountTargetID(id, "pipio/gpt-6.1-sol")].ConsecutiveFails != 0 {
-		t.Fatal("HTTP 429 must quarantine without recording an incorrect answer")
+	if len(s.state.Holds) != 0 || s.state.AccountTargets[accountTargetID(id, "pipio/gpt-6.1-sol")].ConsecutiveFails != 0 {
+		t.Fatal("HTTP 429 must retry without isolation or recording an incorrect answer")
 	}
 	s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
 	if _, err := s.ApplyRouting(context.Background(), false); err != nil {

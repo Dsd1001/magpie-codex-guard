@@ -23,23 +23,24 @@ type Config struct {
 }
 
 type AccountTarget struct {
-	Account             string        `json:"account"`
-	Model               string        `json:"model"`
-	Enabled             bool          `json:"enabled"`
-	State               string        `json:"state"`
-	Reason              string        `json:"reason,omitempty"`
-	CheckedAt           time.Time     `json:"checked_at,omitempty"`
-	NextCheckAt         time.Time     `json:"next_check_at,omitempty"`
-	ConsecutiveFails    int           `json:"consecutive_fails"`
-	ConsecutivePasses   int           `json:"consecutive_passes"`
-	LastAutoPrompt      string        `json:"last_auto_prompt,omitempty"`
-	PromptRotation      uint64        `json:"prompt_rotation,omitempty"`
-	FingerprintExpected string        `json:"fingerprint_expected,omitempty"`
-	TimingOverride      *TimingPolicy `json:"timing_override,omitempty"`
-	Missing             bool          `json:"missing,omitempty"`
-	FingerprintVersion  string        `json:"fingerprint_version,omitempty"`
-	LastFingerprintAt   time.Time     `json:"last_fingerprint_at,omitempty"`
-	NextFingerprintAt   time.Time     `json:"next_fingerprint_at,omitempty"`
+	ConsecutiveUnavailable int           `json:"consecutive_unavailable,omitempty"`
+	Account                string        `json:"account"`
+	Model                  string        `json:"model"`
+	Enabled                bool          `json:"enabled"`
+	State                  string        `json:"state"`
+	Reason                 string        `json:"reason,omitempty"`
+	CheckedAt              time.Time     `json:"checked_at,omitempty"`
+	NextCheckAt            time.Time     `json:"next_check_at,omitempty"`
+	ConsecutiveFails       int           `json:"consecutive_fails"`
+	ConsecutivePasses      int           `json:"consecutive_passes"`
+	LastAutoPrompt         string        `json:"last_auto_prompt,omitempty"`
+	PromptRotation         uint64        `json:"prompt_rotation,omitempty"`
+	FingerprintExpected    string        `json:"fingerprint_expected,omitempty"`
+	TimingOverride         *TimingPolicy `json:"timing_override,omitempty"`
+	Missing                bool          `json:"missing,omitempty"`
+	FingerprintVersion     string        `json:"fingerprint_version,omitempty"`
+	LastFingerprintAt      time.Time     `json:"last_fingerprint_at,omitempty"`
+	NextFingerprintAt      time.Time     `json:"next_fingerprint_at,omitempty"`
 }
 
 type FingerprintCandidate struct {
