@@ -67,8 +67,8 @@ jobs:
           ARCHIVE="dist/magpie-codex-guard-${VERSION}.tgz"
           test -s "$ARCHIVE"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Refusing to replace existing immutable alpha release $TAG"
-            exit 1
+            echo "Immutable alpha release already exists; preserving published checksums for $TAG"
+            exit 0
           fi
           sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
           gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.28: merge retry-before-quarantine policy and add manual all-account quarantine/detection reset with verified production route restoration. Existing data remains unchanged until explicitly reset."
