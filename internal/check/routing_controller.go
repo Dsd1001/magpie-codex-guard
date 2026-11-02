@@ -456,7 +456,7 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 			continue
 		}
 		changed = true
-		if len(plan.After) == 0 && len(preview.Quarantined) > 0 && !plan.OffAfter && len(heldAPIProviders(projected)) == 0 {
+		if len(plan.After) == 0 && len(preview.Quarantined) > 0 && !plan.OffAfter && len(heldAPIProviders(s.state)) == 0 {
 			return RoutingPreview{}, errors.New("隔离后空白名单将误放行全部账号，拒绝写入")
 		}
 		data, err := json.Marshal(plan.After)
