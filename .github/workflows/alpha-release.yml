@@ -10,6 +10,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'package.json'
+      - 'plugin/**'
+      - 'tests/**'
       - 'scripts/build-release.sh'
       - 'scripts/sync-fingerprint-bank.py'
   workflow_dispatch:

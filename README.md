@@ -169,7 +169,7 @@ flowchart TD
 
 Magpie 使用 `github:Dsd1001/magpie-codex-guard` 源码安装时，插件会从已发布的 Release 获取所需 Go 二进制，使用**固定 SHA-256** 校验安装包及可执行文件；完整 Release 包则优先使用内置二进制。支持 Linux AMD64、Linux ARM64 和 macOS ARM64，首次下载安装需要访问 GitHub Release 并具备 `tar`。
 
-**安装器版本说明：** 完整 alpha.29 Release 包内置可抢占进行中检测的新版 Go 后端。通过 `github:` 源码安装时，安装器会下载并校验固定 SHA-256 的预编译后端；必须使用同时更新到 alpha.29 后端校验值的源码安装器，旧版安装器及旧运行二进制不具备重置 API。升级不会自动重置已有题库、隔离状态或检测时间。
+**安装器版本说明：** 完整 alpha.29 Release 包内置可抢占进行中检测的新版 Go 后端。通过 `github:` 源码安装时，安装器会下载并校验固定 SHA-256 的预编译后端；必须使用同时更新到 alpha.29 后端校验值的源码安装器，旧版运行二进制可能不支持高优先级抢占重置；请确保实际运行的 Go 后端也是 alpha.29。升级不会自动重置已有题库、隔离状态或检测时间。
 
 远程管理可使用插件提供的临时 Cloudflare Quick Tunnel，生成一次性 HTTPS 管理链接；无需自行配置 Cloudflare DNS。管理链接应视同管理员凭证，不要公开分享。
 
