@@ -37,17 +37,13 @@ func TestDifferentObjectivePromptDoesNotAccumulateFailures(t *testing.T) {
 	}
 }
 
-func TestFingerprintRequiresThreeCompleteMismatchRounds(t *testing.T) {
+func TestFingerprintSingleCompleteMismatchImmediatelyIsolates(t *testing.T) {
 	now := time.Now()
 	target := &AccountTarget{Account: "acct", Model: "codex/gpt-6.1-sol"}
-	for n := 1; n <= 3; n++ {
-		create, release := objectiveTransition(target, nil, "failed", FingerprintPromptID, now)
-		if create != (n == 3) || release || target.ConsecutiveFails != n {
-			t.Fatalf("wrong fingerprint threshold at round %d: %+v", n, target)
-		}
-		now = target.NextCheckAt
+	create, release := objectiveTransition(target, nil, "failed", FingerprintPromptID, now)
+	if !create || release || target.ConsecutiveFails != 1 || target.State != PhaseIsolated {
+		t.Fatalf("complete fingerprint mismatch did not immediately isolate: %+v", target)
 	}
-
 	hold := startHold(*target, now)
 	if hold.Prompt != FingerprintPromptID || hold.Risk != "isolated" {
 		t.Fatalf("fingerprint hold incorrect: %+v", hold)

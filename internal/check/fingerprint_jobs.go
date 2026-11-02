@@ -82,7 +82,7 @@ func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
 		if refErr != nil {
 			report = FingerprintReport{Verdict: "indeterminate", Diagnostic: refErr.Error()}
 		} else {
-			report, batch = s.sampleFingerprint(probeCtx, epoch, account, model, expected, runner)
+			report, batch, _ = s.sampleFingerprint(probeCtx, epoch, account, model, expected, runner)
 		}
 		now := time.Now()
 		result := AccountResult{

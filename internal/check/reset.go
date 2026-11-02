@@ -114,6 +114,7 @@ func resetAllAccountMonitoringState(state *State) {
 		t.NextCheckAt = time.Time{}
 		t.ConsecutiveFails = 0
 		t.ConsecutiveUnavailable = 0
+		t.UnavailablePrompt = ""
 		t.ConsecutivePasses = 0
 		t.LastAutoPrompt = ""
 		t.PromptRotation = 0

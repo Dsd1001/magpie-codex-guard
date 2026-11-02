@@ -230,8 +230,8 @@ function renderHistory(){
   const details=elem('details','history-item');
   const sum=elem('summary');
   sum.append(elem('span','mono muted',stamp(r.time)),elem('strong','',email(r.account)),elem('span','muted',r.prompt_name||r.prompt));
-  const verdict=elem('span',`pill ${r.verdict==='high'||r.verdict==='failed'?'high':r.verdict==='passed'?'ok':r.verdict==='low'?'low':'pending'}`,
-   ({passed:'通过',failed:'错误',unavailable:'不可用',high:'历史高风险',low:'历史低风险',isolated:'已隔离',manual:'人工评价',sampled:'已采样（未判分）',match:'指纹一致',mismatch:'指纹不一致',indeterminate:'指纹不可判'})[r.verdict]||r.verdict);
+  const verdict=elem('span',`pill ${r.verdict==='high'||r.verdict==='failed'||r.verdict==='http_401'||r.verdict==='http_404'?'high':r.verdict==='passed'?'ok':r.verdict==='low'?'low':'pending'}`,
+   ({passed:'通过',failed:'错误',unavailable:'不可用',http_401:'HTTP 401（立即隔离）',http_404:'HTTP 404（立即隔离）',high:'历史高风险',low:'历史低风险',isolated:'已隔离',manual:'人工评价',sampled:'已采样（未判分）',match:'指纹一致',mismatch:'指纹不一致',indeterminate:'指纹不可判'})[r.verdict]||r.verdict);
   sum.append(verdict);
   details.append(sum);
   if(r.error)details.append(elem('p','hint',r.error));

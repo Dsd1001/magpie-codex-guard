@@ -110,12 +110,11 @@ func TestFingerprintObjectiveMatchIsSinglePassedCheckWithThreeSamples(t *testing
 	_ = dir
 }
 
-func TestFingerprintObjectiveThreeMismatchRoundsIsolate(t *testing.T) {
+func TestFingerprintObjectiveSingleCompleteMismatchImmediatelyIsolates(t *testing.T) {
 	s, calls, close := fingerprintBankFixture(t)
 	defer close()
 	fake := &fakeFingerprint{verdict: "mismatch"}
 	s.fingerprint = fake
-	// No manual reference configuration is needed for a known detection model.
 	if err := s.ConfigureDetectionPrompts(nil, true, FingerprintObjective); err != nil {
 		t.Fatal(err)
 	}
@@ -129,28 +128,18 @@ func TestFingerprintObjectiveThreeMismatchRoundsIsolate(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
-	target = s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
-	if target.State != PhaseSuspect || target.ConsecutiveFails != 1 || len(s.state.Holds) != 0 {
-		t.Fatalf("first mismatch must retry: %+v", target)
-	}
-	for n := 0; n < 2; n++ {
-		if err := s.ScheduleOneAccount(target.NextCheckAt); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
-	}
-	if target.State != PhaseIsolated || target.ConsecutiveFails != 3 {
-		t.Fatalf("three scored mismatches must isolate: %+v", target)
+	if target.State != PhaseIsolated || target.ConsecutiveFails != 1 || target.ConsecutiveUnavailable != 0 {
+		t.Fatalf("one complete mismatched batch must isolate: %+v", target)
 	}
 	hold, ok := s.state.Holds["aaa"]
 	if !ok || hold.Risk != "isolated" || hold.Prompt != FingerprintPromptID {
-		t.Fatalf("one mismatch did not create unified hold: %+v", hold)
+		t.Fatalf("first mismatched fingerprint did not create hold: %+v", hold)
 	}
-	if calls.Load() != 9 || fake.call.Load() != 3 {
-		t.Fatalf("three scored rounds should send 9 requests: upstream=%d eval=%d", calls.Load(), fake.call.Load())
+	if calls.Load() != 3 || fake.call.Load() != 1 {
+		t.Fatalf("one round must use exactly 3 samples and one classifier call: %d/%d", calls.Load(), fake.call.Load())
 	}
 	if until := time.Until(hold.NextCheckAt); until < 5*time.Hour || until > 7*time.Hour {
-		t.Fatal("unified first recheck incorrectly scheduled")
+		t.Fatal("first quarantine recheck did not retain configured timing")
 	}
 }
 
@@ -288,14 +277,8 @@ func TestFingerprintObjectiveProductionRoutingAndRecovery(t *testing.T) {
 	if requests.Load() != 3 {
 		t.Fatalf("one scored round must use 3 samples without extra review: %d", requests.Load())
 	}
-	if len(s.state.Holds) != 0 || len(decodeKeyStates(t, path)["production"].Accounts) != 0 {
-		t.Fatal("first mismatch changed production access")
-	}
-	for n := 0; n < 2; n++ {
-		if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", FingerprintPromptID, false); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
+	if len(s.state.Holds) != 1 || requests.Load() != 3 {
+		t.Fatal("first complete mismatch must isolate and route after exactly three samples")
 	}
 	if h := s.state.Holds["aaa"]; h.Risk != "isolated" {
 		t.Fatalf("unified hold not created: %+v", h)

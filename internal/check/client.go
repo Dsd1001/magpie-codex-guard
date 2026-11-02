@@ -76,6 +76,37 @@ func Models(ctx context.Context, c Config) ([]Model, error) {
 	}
 	return out, nil
 }
+
+// Preserve the real gateway response status for automatic quarantine decisions.
+// Free-form error text (e.g. a timeout message mentioning "404") is not
+// sufficient evidence to immediately quarantine an account.
+type gatewayHTTPStatusError struct {
+	status int
+	detail string
+}
+
+func (e *gatewayHTTPStatusError) Error() string {
+	if e.detail != "" {
+		return e.detail
+	}
+	return fmt.Sprintf("Magpie HTTP %d", e.status)
+}
+
+func immediateGatewayVerdict(err error) string {
+	var status *gatewayHTTPStatusError
+	if !errors.As(err, &status) {
+		return ""
+	}
+	switch status.status {
+	case http.StatusUnauthorized:
+		return "http_401"
+	case http.StatusNotFound:
+		return "http_404"
+	default:
+		return ""
+	}
+}
+
 func CallAccount(ctx context.Context, c Config, model, account, prompt string) (string, int, error) {
 	pinUser, err := ResolveProbeLoginUser(account)
 	if err != nil {
@@ -103,9 +134,10 @@ func CallAccount(ctx context.Context, c Config, model, account, prompt string) (
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return "", 0, errors.New("Magpie HTTP 404：模型路由不存在，或指定账号无法服务该模型；请检查 Codex 模型与账号权限")
+			return "", 0, &gatewayHTTPStatusError{status: http.StatusNotFound,
+				detail: "Magpie HTTP 404：模型路由不存在，或指定账号无法服务该模型；请检查 Codex 模型与账号权限"}
 		}
-		return "", 0, fmt.Errorf("Magpie HTTP %d", resp.StatusCode)
+		return "", 0, &gatewayHTTPStatusError{status: resp.StatusCode}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024+1))
 	if err != nil {

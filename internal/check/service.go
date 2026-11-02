@@ -24,6 +24,7 @@ type Config struct {
 
 type AccountTarget struct {
 	ConsecutiveUnavailable int           `json:"consecutive_unavailable,omitempty"`
+	UnavailablePrompt      string        `json:"unavailable_prompt,omitempty"`
 	Account                string        `json:"account"`
 	Model                  string        `json:"model"`
 	Enabled                bool          `json:"enabled"`

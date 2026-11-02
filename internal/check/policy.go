@@ -40,11 +40,37 @@ func objectiveTransition(t *AccountTarget, h *QuarantineHold, verdict, prompt st
 	return objectiveTransitionWithTiming(t, h, verdict, prompt, now, DefaultTimingPolicy())
 }
 
-// Each complete fingerprint batch counts as one round. Three confirmed wrong
-// answers isolate; unavailable rounds use a separate retry counter and isolate
-// only after three attempts. Existing holds still require two valid passes.
+// One reliable three-sample fingerprint mismatch isolates immediately.
+// Ordinary scored questions still require three wrong answers. Incomplete
+// checks are retried at the configurable unavailable interval and quarantine
+// after three consecutive unavailable rounds of the same question. A real
+// gateway HTTP 401/404 always quarantines immediately. Recovery remains
+// two consecutive valid passes of the original question.
 func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, verdict, prompt string, now time.Time, timing TimingPolicy) (createHold, releaseHold bool) {
 	target.CheckedAt = now
+	if verdict == "http_401" || verdict == "http_404" {
+		status := "401"
+		if verdict == "http_404" {
+			status = "404"
+		}
+		target.ConsecutiveUnavailable = 0
+		target.UnavailablePrompt = ""
+		target.ConsecutiveFails = 0
+		target.ConsecutivePasses = 0
+		target.LastAutoPrompt = prompt
+		target.State = PhaseIsolated
+		target.Reason = "自动检测出现 HTTP " + status + "，立即隔离"
+		if hold != nil {
+			hold.ConfirmationPasses = 0
+			hold.FirstRecheckDone = true
+			hold.Cause = verdict
+			hold.NextCheckAt = now.Add(timing.repeat())
+			target.NextCheckAt = hold.NextCheckAt
+			return false, false
+		}
+		target.NextCheckAt = now.Add(timing.first())
+		return true, false
+	}
 	if verdict != "passed" && verdict != "failed" {
 		target.ConsecutivePasses = 0
 		if hold != nil {
@@ -58,11 +84,18 @@ func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, 
 			target.NextCheckAt = hold.NextCheckAt
 			return false, false
 		}
+		// Only consecutive unavailable attempts of the same selected
+		// question form one unavailable streak.
+		if target.UnavailablePrompt != "" && target.UnavailablePrompt != prompt {
+			target.ConsecutiveUnavailable = 0
+		}
+		target.UnavailablePrompt = prompt
 		target.ConsecutiveUnavailable++
 		target.State = "unavailable"
 		target.Reason = fmt.Sprintf("检测不可用（连续 %d/3 轮），等待自动重试；保持账号调度", target.ConsecutiveUnavailable)
 		target.NextCheckAt = now.Add(timing.unavailable())
 		if target.ConsecutiveUnavailable >= 3 {
+			target.UnavailablePrompt = ""
 			target.State = PhaseIsolated
 			target.LastAutoPrompt = prompt
 			target.Reason = "自动检测连续三轮不可用，重试后仍未获得有效结果，隔离"
@@ -71,6 +104,7 @@ func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, 
 		return false, false
 	}
 	target.ConsecutiveUnavailable = 0
+	target.UnavailablePrompt = ""
 	if hold != nil {
 		if verdict == "passed" {
 			hold.ConfirmationPasses++
@@ -116,15 +150,23 @@ func objectiveTransitionWithTiming(target *AccountTarget, hold *QuarantineHold, 
 		return false, false
 	}
 	target.ConsecutiveFails++
+	if prompt == FingerprintPromptID {
+		// A reliable fingerprint result is a complete decision in itself;
+		// ignore any prior mismatches accumulated under older versions.
+		target.ConsecutiveFails = 1
+	}
 	target.ConsecutivePasses = 0
 	target.State = PhaseSuspect
 	target.Reason = fmt.Sprintf("同一道客观题连续 %d 次回答错误", target.ConsecutiveFails)
 	target.NextCheckAt = now.Add(timing.suspect())
 	threshold := 3
+	if prompt == FingerprintPromptID {
+		threshold = 1
+	}
 	if target.ConsecutiveFails >= threshold {
 		target.State = PhaseIsolated
 		if prompt == FingerprintPromptID {
-			target.Reason = "指纹题连续三轮完整检测确认不一致，隔离"
+			target.Reason = "指纹题三次有效采样确认不一致，立即隔离"
 		} else {
 			target.Reason = "普通客观题连续三次回答错误，直接隔离"
 		}

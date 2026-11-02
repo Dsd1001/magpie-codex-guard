@@ -180,17 +180,8 @@ func TestAPIUpstreamFingerprintIsolationRecoveryAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
-	if len(s.state.Holds) != 0 || len(decodeKeyStates(t, path)["production"].Models) != 0 {
-		t.Fatal("first API mismatch changed production scope")
-	}
-	for n := 0; n < 2; n++ {
-		if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
-	}
-	if calls != 9 || s.state.Holds[id].Risk != "isolated" {
-		t.Fatalf("three fingerprint mismatch rounds must quarantine after 9 samples: %d %+v", calls, s.state.Holds[id])
+	if calls != 3 || s.state.Holds[id].Risk != "isolated" {
+		t.Fatalf("first complete fingerprint mismatch must quarantine after 3 samples: %d %+v", calls, s.state.Holds[id])
 	}
 	keys := decodeKeyStates(t, path)
 	if !slices.Equal(keys["production"].Models, []string{"codex/*", "cybersol/*"}) || keys["production"].Off {

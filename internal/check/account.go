@@ -191,6 +191,8 @@ func (s *Service) runAccount(parent context.Context, epoch uint64, account, mode
 	verdict := "unavailable"
 	if err == nil {
 		verdict = gradeConfiguredPrompt(p, answer)
+	} else if immediate := immediateGatewayVerdict(err); immediate != "" {
+		verdict = immediate
 	}
 	now := time.Now()
 	r := AccountResult{ID: Secret()[:12], Account: account, Model: model, Prompt: p.ID, PromptName: p.Name, Verdict: verdict, Time: now, Tokens: tokens, Answer: answer}
@@ -218,7 +220,11 @@ func (s *Service) runAccount(parent context.Context, epoch uint64, account, mode
 			timing := s.timingForTargetLocked(t)
 			first, release := objectiveTransitionWithTiming(t, holdPtr, verdict, p.ID, now, timing)
 			if first {
-				s.state.Holds[account] = startHoldWithTiming(*t, now, timing)
+				newHold := startHoldWithTiming(*t, now, timing)
+				if verdict == "http_401" || verdict == "http_404" {
+					newHold.Cause = verdict
+				}
+				s.state.Holds[account] = newHold
 				routeChanged = true
 			} else if release {
 				delete(s.state.Holds, account)
@@ -253,14 +259,14 @@ func (s *Service) routeHasHold(account string) bool {
 
 // sampleFingerprint collects 3 inputs and returns the existing local scorer
 // verdict. It does not change quarantine holds or objective failure counters.
-func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, account, model, expected string, runner FingerprintRunner) (FingerprintReport, string) {
+func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, account, model, expected string, runner FingerprintRunner) (FingerprintReport, string, string) {
 	challenges := newFingerprintChallenges()
 	batch := Secret()[:12]
 	outputs := []fingerprint.Output{}
 	issue := ""
 	for _, ch := range challenges {
 		if parent.Err() != nil {
-			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch
+			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch, ""
 		}
 		cfg, err := s.reserveRequest()
 		var answer string
@@ -282,7 +288,7 @@ func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, accoun
 		s.mu.Lock()
 		if !s.probeCurrentLocked(epoch) || parent.Err() != nil {
 			s.mu.Unlock()
-			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch
+			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch, ""
 		}
 		s.addResult(r)
 		if e := s.store.Save(s.state); e != nil {
@@ -290,6 +296,14 @@ func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, accoun
 		}
 		s.mu.Unlock()
 		if err != nil {
+			if immediate := immediateGatewayVerdict(err); immediate != "" {
+				// An explicit 401/404 is enough to quarantine now: no extra
+				// sampling or local classifier is needed.
+				return FingerprintReport{
+					Verdict: "indeterminate", UsedOutputs: len(outputs),
+					Diagnostic: "采样失败：" + issue,
+				}, batch, immediate
+			}
 			break
 		}
 		outputs = append(outputs, fingerprint.Output{Text: answer, ExpectedCount: ch.ExpectedCount})
@@ -304,7 +318,7 @@ func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, accoun
 			report.Diagnostic = "采样失败：" + issue
 		}
 	}
-	return report, batch
+	return report, batch, ""
 }
 
 func (s *Service) configureTargetFingerprint(account, model, expected string) error {

@@ -107,6 +107,15 @@ func selectAutomaticPrompt(t AccountTarget, isolated, rotate bool, prompts []Pro
 	if len(prompts) == 0 {
 		return ""
 	}
+	// An incomplete fingerprint batch must retry the same question, even
+	// when rotating a mixed automatic question bank.
+	if t.ConsecutiveUnavailable > 0 && t.UnavailablePrompt != "" {
+		for _, p := range prompts {
+			if p.ID == t.UnavailablePrompt {
+				return p.ID
+			}
+		}
+	}
 	if (isolated || t.ConsecutiveFails > 0) && t.LastAutoPrompt != "" {
 		for _, p := range prompts {
 			if p.ID == t.LastAutoPrompt {

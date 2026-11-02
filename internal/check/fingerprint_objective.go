@@ -81,19 +81,23 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, epoch uint64, acc
 
 	report := FingerprintReport{Verdict: "indeterminate", UsedOutputs: 0}
 	batch := ""
+	immediate := ""
 	if refErr != nil {
 		report.Diagnostic = refErr.Error()
 	} else {
-		report, batch = s.sampleFingerprint(ctx, epoch, account, model, expected, runner)
+		report, batch, immediate = s.sampleFingerprint(ctx, epoch, account, model, expected, runner)
 	}
 	verdict := fingerprintAsObjectiveVerdict(report, expected)
+	if immediate != "" {
+		verdict = immediate
+	}
 	now := time.Now()
 	result := AccountResult{
 		ID: Secret()[:12], Batch: batch, Account: account, Model: model,
 		Prompt: FingerprintPromptID, PromptName: "自动客观题 · 模型指纹检测",
 		Time: now, Verdict: verdict, Fingerprint: &report,
 	}
-	if refErr != nil {
+	if refErr != nil || immediate != "" {
 		result.Error = report.Diagnostic
 	}
 	s.mu.Lock()
@@ -114,7 +118,11 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, epoch uint64, acc
 		t.FingerprintVersion = report.Version
 		t.LastFingerprintAt = now
 		if first {
-			s.state.Holds[account] = startHoldWithTiming(*t, now, timing)
+			newHold := startHoldWithTiming(*t, now, timing)
+			if immediate != "" {
+				newHold.Cause = immediate
+			}
+			s.state.Holds[account] = newHold
 			routeChanged = true
 		} else if release {
 			delete(s.state.Holds, account)

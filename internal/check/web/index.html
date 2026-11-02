@@ -51,16 +51,16 @@
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
     <section id="rules" class="page" hidden>
-      <div class="section-head"><div><h1>检测题库</h1><p>全新安装默认通过模型指纹检测结果判断降智；旧安装保留已有题库。指纹题一轮 3 次采样，连续 3 轮可靠不一致才隔离，没有额外指纹复核。</p></div></div>
+      <div class="section-head"><div><h1>检测题库</h1><p>全新安装默认通过模型指纹检测结果判断降智；旧安装保留已有题库。指纹题一轮 3 次采样，完整且可靠不一致立即隔离；429／超时等连续 3 轮不可用才隔离；401／404 立即隔离。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
         <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题</label>
-        <p class="hint">全新安装默认选中模型指纹题来判断降智；模型指纹与牛奶题及自定义题并列选择，没有额外指纹复核。指纹题一轮 3 次采样，连续 3 轮可靠不一致才隔离；普通题同题连续 3 次错误隔离。检测连续 3 轮不可用才隔离；原题连续 2 次有效通过解除隔离。</p>
+        <p class="hint">全新安装默认选中模型指纹题来判断降智；模型指纹与牛奶题及自定义题并列选择，没有额外指纹复核。指纹题一轮 3 次采样，完整且可靠不一致立即隔离；普通客观题同题连续 3 次错误隔离。429、超时、样本不完整等连续 3 轮不可用才隔离，中间获得有效一致／不一致立即按当轮结果处理。HTTP 401／404 立即隔离；原题连续 2 次有效通过解除隔离。</p>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
       </div>
       <div class="card form-card">
         <h2>手动检测</h2>
-        <p class="hint">选择已添加的监测账号、模型和检测题目。模型指纹将进行 3 轮采样，结果只记录在检测历史中，不触发隔离。</p>
+        <p class="hint">选择已添加的监测账号、模型和检测题目。模型指纹每轮进行 3 次独立采样，手动检测结果只记录在检测历史中，不触发隔离。</p>
         <div class="fields manual-fields">
           <label>监测账号与模型<select id="manualTarget"><option value="">选择监测目标</option></select></label>
           <label>题目类型 / 检测题目<select id="manualPrompt"><option value="">选择客观题或指纹检测</option></select></label>
@@ -132,7 +132,7 @@
         <div class="actions-inline"><button id="saveTiming" class="primary">保存检测时间</button><button id="resetTiming" class="subtle">填入默认时间</button></div>
         <p class="hint" id="timingHelp">隔离复测计时持久化保存在数据库中，服务重启不会重置。时间设置必须通过服务端安全范围校验；每日上游请求预算仍然生效。</p>
       </div>
-      <div class="card small-card"><h2>统一检测策略</h2><p>普通客观题连续 3 次有效错误隔离，指纹题一次可靠不一致立即隔离（3 次采样为 1 轮）；隔离后复测导致隔离的原题，连续 2 次正确恢复。自动检测不可用不计错误次数，但会立即隔离；所有检测时间可自定义。</p></div>
+      <div class="card small-card"><h2>统一检测策略</h2><p>普通客观题连续 3 次有效错误隔离；指纹题一次完整、可靠的不一致立即隔离（3 次采样为 1 轮）。HTTP 401／404 立即隔离；429、超时等不可用按自定义间隔重试，连续 3 轮不可用才隔离。有效结果清空不可用计数，隔离后原题连续 2 次通过才能恢复；所有检测时间保持可自定义。</p></div>
     </section>
   </main>
   <footer>Codex Guard · 独立插件开发版 · 仅管理通过所配置 Gateway Key 的业务流量</footer>
