@@ -69,18 +69,20 @@ func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
 	}
 	expected, refErr := resolveFingerprintReference(model, target.FingerprintExpected)
 	runner := s.fingerprint
-	s.accountProbeActive = true
-	s.wg.Add(1)
+	probeCtx, epoch := s.beginAccountProbeLocked()
 	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()
-		defer func() { s.mu.Lock(); s.accountProbeActive = false; s.mu.Unlock() }()
+		defer s.finishAccountProbe(epoch)
+		if probeCtx.Err() != nil {
+			return
+		}
 		var report FingerprintReport
 		var batch string
 		if refErr != nil {
 			report = FingerprintReport{Verdict: "indeterminate", Diagnostic: refErr.Error()}
 		} else {
-			report, batch = s.sampleFingerprint(s.ctx, account, model, expected, runner)
+			report, batch = s.sampleFingerprint(probeCtx, epoch, account, model, expected, runner)
 		}
 		now := time.Now()
 		result := AccountResult{
@@ -89,6 +91,10 @@ func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
 			Verdict: report.Verdict, Time: now, Fingerprint: &report,
 		}
 		s.mu.Lock()
+		if !s.probeCurrentLocked(epoch) || probeCtx.Err() != nil {
+			s.mu.Unlock()
+			return
+		}
 		s.addResult(result)
 		if err := s.store.Save(s.state); err != nil {
 			s.health = err.Error()

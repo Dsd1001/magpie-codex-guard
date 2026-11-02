@@ -44,6 +44,10 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 		s.mu.Unlock()
 		return errors.New("已有账号检测正在执行")
 	}
+	if s.autoChecksPaused && !s.state.Route.ScheduleEnabled {
+		s.mu.Unlock()
+		return errors.New("全部账号刚被重置；自动检测暂停中")
+	}
 	if !slices.Contains(s.effectiveAutoPromptPolicyLocked().PromptIDs, FingerprintPromptID) {
 		s.mu.Unlock()
 		return errors.New("模型指纹未加入自动客观题题库")
@@ -62,27 +66,25 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 		s.mu.Unlock()
 		return err
 	}
-	s.accountProbeActive = true
-	s.wg.Add(1)
+	probeCtx, epoch := s.beginAccountProbeLocked()
 	s.mu.Unlock()
-	go s.runAutomaticFingerprint(s.ctx, account, model, expected, refErr, runner)
+	go s.runAutomaticFingerprint(probeCtx, epoch, account, model, expected, refErr, runner)
 	return nil
 }
 
-func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, expected string, refErr error, runner FingerprintRunner) {
+func (s *Service) runAutomaticFingerprint(ctx context.Context, epoch uint64, account, model, expected string, refErr error, runner FingerprintRunner) {
 	defer s.wg.Done()
-	defer func() {
-		s.mu.Lock()
-		s.accountProbeActive = false
-		s.mu.Unlock()
-	}()
+	defer s.finishAccountProbe(epoch)
+	if ctx.Err() != nil {
+		return
+	}
 
 	report := FingerprintReport{Verdict: "indeterminate", UsedOutputs: 0}
 	batch := ""
 	if refErr != nil {
 		report.Diagnostic = refErr.Error()
 	} else {
-		report, batch = s.sampleFingerprint(ctx, account, model, expected, runner)
+		report, batch = s.sampleFingerprint(ctx, epoch, account, model, expected, runner)
 	}
 	verdict := fingerprintAsObjectiveVerdict(report, expected)
 	now := time.Now()
@@ -95,6 +97,10 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, e
 		result.Error = report.Diagnostic
 	}
 	s.mu.Lock()
+	if !s.probeCurrentLocked(epoch) || ctx.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.addResult(result)
 	routeChanged := false
 	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil {
@@ -124,11 +130,11 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, account, model, e
 	}
 	active := s.state.Route.AutoApply
 	s.mu.Unlock()
-	if routeChanged && active {
+	if routeChanged && active && ctx.Err() == nil {
 		routingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		_, err := s.ApplyRouting(routingCtx, false)
 		cancel()
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			s.noteSchedulerError(fmt.Errorf("账号自动指纹隔离路由同步失败：%w", err))
 		}
 	}

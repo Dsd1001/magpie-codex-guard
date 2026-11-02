@@ -105,6 +105,9 @@ type Service struct {
 	dir, gate          string
 	running            map[string]bool // prevents changes while account checks are in progress
 	accountProbeActive bool
+	probeEpoch         uint64
+	probeCancel        context.CancelFunc
+	autoChecksPaused   bool // reset blocks late scheduler handoffs until scheduling is re-enabled
 	ctx                context.Context
 	cancel             context.CancelFunc
 	wg                 sync.WaitGroup
@@ -228,6 +231,48 @@ func New(dir, gate string) (*Service, error) {
 	}
 	return s, nil
 }
+
+// beginAccountProbeLocked records a generation for a single in-flight check.
+// Reset may cancel this probe without waiting for a slow upstream to return.
+func (s *Service) beginAccountProbeLocked() (context.Context, uint64) {
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.probeCancel = cancel
+	s.accountProbeActive = true
+	s.wg.Add(1)
+	return ctx, s.probeEpoch
+}
+
+func (s *Service) probeCurrentLocked(epoch uint64) bool {
+	return epoch == s.probeEpoch
+}
+
+// A stale worker must never clear a newer probe's busy flag after a reset.
+func (s *Service) finishAccountProbe(epoch uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.probeCurrentLocked(epoch) {
+		return
+	}
+	if s.probeCancel != nil {
+		s.probeCancel()
+		s.probeCancel = nil
+	}
+	s.accountProbeActive = false
+}
+
+// Called while holding the service lock, *before* restoring any production
+// routing. All pre-reset probes are invalidated even if their HTTP clients or
+// fingerprint runners do not respond promptly to context cancellation.
+func (s *Service) preemptAccountProbesLocked() {
+	s.probeEpoch++
+	if s.probeCancel != nil {
+		s.probeCancel()
+		s.probeCancel = nil
+	}
+	s.accountProbeActive = false
+	s.autoChecksPaused = true
+}
+
 func (s *Service) Close() { s.cancel(); s.wg.Wait(); s.store.Close() }
 
 func AtomicWrite(name string, b []byte) error {

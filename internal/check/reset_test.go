@@ -3,10 +3,14 @@ package check
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/Dsd1001/magpie-codex-guard/internal/fingerprint"
 )
 
 func TestResetAllStatesRestoresRoutingAndKeepsHistory(t *testing.T) {
@@ -164,14 +168,167 @@ func TestResetRejectsExternalKeyEditsWithoutClearingHolds(t *testing.T) {
 	}
 }
 
-func TestResetRejectsRunningAccountProbe(t *testing.T) {
+func TestResetPreemptsRunningAccountProbe(t *testing.T) {
 	s, _ := emergencyFixture(t)
 	defer s.Close()
 	s.accountProbeActive = true
-	if _, err := s.ApplyRouting(context.Background(), true); err == nil {
-		t.Fatal("reset must not race with an active probe")
+	epoch := s.probeEpoch
+	if _, err := s.ApplyRouting(context.Background(), true); err != nil {
+		t.Fatalf("reset must bypass a running probe: %v", err)
 	}
-	if !s.state.Route.AutoApply {
-		t.Fatal("a rejected reset modified routing state")
+	if s.accountProbeActive || s.probeEpoch != epoch+1 || !s.autoChecksPaused {
+		t.Fatal("reset did not invalidate the active probe and pause automatic checks")
 	}
+}
+
+func awaitProbeSignal(t *testing.T, ch <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal(message)
+	}
+}
+
+func TestResetCancelsRunningObjectiveAndDropsLateVerdict(t *testing.T) {
+	s, keyPath := emergencyFixture(t)
+	defer s.Close()
+	started := make(chan struct{})
+	releaseServer := make(chan struct{})
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-r.Context().Done():
+		case <-releaseServer:
+		}
+	}))
+	defer gateway.Close()
+	defer close(releaseServer)
+	s.state.Config.GatewayURL = gateway.URL
+	s.state.Route.ScheduleEnabled = true
+	s.state.Holds["bbb"] = QuarantineHold{Account: "bbb", Risk: "isolated"}
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", "milk", false); err != nil {
+		t.Fatal(err)
+	}
+	awaitProbeSignal(t, started, "objective request was never sent")
+	epoch := s.probeEpoch
+	startedAt := time.Now()
+	if _, err := s.ApplyRouting(context.Background(), true); err != nil {
+		t.Fatalf("running HTTP request must not block reset: %v", err)
+	}
+	if time.Since(startedAt) > 3*time.Second {
+		t.Fatal("reset waited for a slow upstream probe")
+	}
+	probeDone := make(chan struct{})
+	go func() { s.wg.Wait(); close(probeDone) }()
+	awaitProbeSignal(t, probeDone, "reset did not stop the upstream HTTP request")
+	if s.probeEpoch != epoch+1 || s.accountProbeActive {
+		t.Fatal("outgoing probe did not finish in the previous generation")
+	}
+	if len(s.state.AccountResults) != 0 || len(s.state.Holds) != 0 {
+		t.Fatal("late objective verdict was written after reset")
+	}
+	target := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
+	if target.State != "unverified" || target.ConsecutiveFails != 0 {
+		t.Fatalf("old objective check overwrote the reset state: %+v", target)
+	}
+	if s.state.Route.ScheduleEnabled || s.state.Route.AutoApply || decodeKeyStates(t, keyPath)["production"].Off {
+		t.Fatal("reset did not pause automation and restore production keys")
+	}
+	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", "milk", false); err == nil {
+		t.Fatal("stale scheduler handoff must not start an automatic probe")
+	}
+}
+
+type blockingResetRunner struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingResetRunner) Evaluate(_ []fingerprint.Output, _ string) FingerprintReport {
+	close(r.started)
+	<-r.release
+	return FingerprintReport{Verdict: "mismatch", UsedOutputs: 3}
+}
+
+func TestResetPreemptsNonCancelableFingerprintRunner(t *testing.T) {
+	for _, manual := range []bool{false, true} {
+		name := "automatic"
+		if manual {
+			name = "manual"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, _ := emergencyFixture(t)
+			defer s.Close()
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "gateway unavailable", http.StatusServiceUnavailable)
+			}))
+			defer gateway.Close()
+			s.state.Config.GatewayURL = gateway.URL
+			runner := &blockingResetRunner{started: make(chan struct{}), release: make(chan struct{})}
+			released := false
+			defer func() {
+				if !released {
+					close(runner.release)
+				}
+			}()
+			s.fingerprint = runner
+			target := s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")]
+			target.FingerprintExpected = "gpt-6-astra"
+			var err error
+			if manual {
+				err = s.TriggerFingerprint("aaa", "codex/gpt-6.1-sol", true)
+			} else {
+				err = s.TriggerAutomaticFingerprint("aaa", "codex/gpt-6.1-sol")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			awaitProbeSignal(t, runner.started, "fingerprint runner never started")
+			historyCount := len(s.state.AccountResults)
+			if _, err := s.ApplyRouting(context.Background(), true); err != nil {
+				t.Fatalf("reset blocked on fingerprint scorer: %v", err)
+			}
+			if len(s.state.AccountResults) != historyCount {
+				t.Fatal("reset must preserve existing fingerprint sample history")
+			}
+			close(runner.release)
+			released = true
+			s.wg.Wait()
+			if len(s.state.AccountResults) != historyCount || len(s.state.Holds) != 0 {
+				t.Fatal("old fingerprint verdict returned after reset")
+			}
+			if target.State != "unverified" {
+				t.Fatalf("late fingerprint changed target: %+v", target)
+			}
+		})
+	}
+}
+
+func TestResetOldProbeCompletionCannotClearNewProbe(t *testing.T) {
+	s, _ := emergencyFixture(t)
+	defer s.Close()
+	s.mu.Lock()
+	_, oldEpoch := s.beginAccountProbeLocked()
+	s.mu.Unlock()
+	if _, err := s.ApplyRouting(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	_, newEpoch := s.beginAccountProbeLocked()
+	s.mu.Unlock()
+	s.finishAccountProbe(oldEpoch)
+	s.mu.Lock()
+	active := s.accountProbeActive
+	currentEpoch := s.probeEpoch
+	s.mu.Unlock()
+	if !active || currentEpoch != newEpoch || newEpoch == oldEpoch {
+		t.Fatal("stale worker accidentally released the new probe lock")
+	}
+	s.finishAccountProbe(newEpoch)
+	s.wg.Done()
+	s.wg.Done()
 }

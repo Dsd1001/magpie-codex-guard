@@ -486,7 +486,7 @@ $('approveLiveScopes').onclick=()=>action(async()=>{
 $('resetAllAccountStates').onclick=async()=>{
  const button=$('resetAllAccountStates');
  if(button.disabled)return;
- if(!confirm('将清空所有账号的隔离和检测状态，恢复 Guard 管理的生产 Gateway Key 原始权限，并暂停自动检测与自动隔离。账号设置和检测历史保留。是否继续？'))return;
+ if(!confirm('此重置优先于所有正在执行的检测：立即取消旧检测并废弃未完成结果；清空所有账号的隔离和检测状态，恢复 Guard 管理的生产 Gateway Key 原始权限，并暂停自动检测与自动隔离。账号设置和检测历史保留。是否继续？'))return;
  const phrase=prompt('此操作影响全部监测账号及生产 Key。确认请输入 RESET_ALL_ACCOUNT_STATES');
  if(phrase!=='RESET_ALL_ACCOUNT_STATES')return;
  button.disabled=true;

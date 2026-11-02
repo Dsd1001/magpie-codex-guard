@@ -44,7 +44,7 @@
       <p class="hint">同步只修改检测目标，不影响 Gateway Key 白名单。已删除账号会显示为隔离留档并停止检测；旧隔离记录会保留。新增账号从已有监测模型继承检测设置，自动同步需要手动开启。</p>
       <div class="actions-inline">
         <button id="resetAllAccountStates" class="danger" type="button">重置全部账号隔离／检测状态</button>
-        <span class="hint">同时恢复 Guard 管理的生产路由并暂停自动检测／隔离；保留账号配置和检测历史。</span>
+        <span class="hint">最高优先级：即使检测正在运行也能重置，立即取消旧检测并丢弃过期结果；恢复生产路由并暂停自动检测／隔离。</span>
       </div>
       <p id="modelHelp" class="hint model-help" role="status">正在读取 Codex 与已登记 API 上游的模型…</p>
       <div class="card table-scroll"><table><thead><tr><th>账号</th><th>模型</th><th>状态</th><th>下次检测</th><th>操作</th></tr></thead><tbody id="accountRows"><tr><td colspan="5" class="empty">正在读取账号信息…</td></tr></tbody></table></div>

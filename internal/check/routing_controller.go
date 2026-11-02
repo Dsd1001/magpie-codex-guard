@@ -375,8 +375,10 @@ func (s *Service) ConfigureRouting(probeKeyID string, active bool, confirm strin
 func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPreview, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if restore && (s.accountProbeActive || len(s.running) > 0) {
-		return RoutingPreview{}, errors.New("仍有检测正在执行，须结束后才能重置全部账号")
+	if restore {
+		// Administrator reset takes precedence over every in-flight probe.
+		// Cancellation is immediate; stale results are invalidated by epoch.
+		s.preemptAccountProbesLocked()
 	}
 	if !restore && !s.state.Route.AutoApply {
 		return RoutingPreview{}, errors.New("自动路由仍是观察模式，禁止修改生产 Key")

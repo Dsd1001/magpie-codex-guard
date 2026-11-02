@@ -136,6 +136,10 @@ func (s *Service) TriggerAccount(account, model, prompt string, manual bool) err
 		s.mu.Unlock()
 		return errors.New("已有账号检测正在执行")
 	}
+	if !manual && s.autoChecksPaused && !s.state.Route.ScheduleEnabled {
+		s.mu.Unlock()
+		return errors.New("全部账号刚被重置；自动检测暂停中")
+	}
 	p, ok := s.findPromptLocked(prompt)
 	if !ok {
 		s.mu.Unlock()
@@ -157,10 +161,9 @@ func (s *Service) TriggerAccount(account, model, prompt string, manual bool) err
 		s.mu.Unlock()
 		return err
 	}
-	s.accountProbeActive = true
-	s.wg.Add(1)
+	probeCtx, epoch := s.beginAccountProbeLocked()
 	s.mu.Unlock()
-	go s.runAccount(s.ctx, account, model, p, manual)
+	go s.runAccount(probeCtx, epoch, account, model, p, manual)
 	return nil
 }
 func (s *Service) addResult(result AccountResult) {
@@ -169,9 +172,12 @@ func (s *Service) addResult(result AccountResult) {
 		s.state.AccountResults = append([]AccountResult(nil), s.state.AccountResults[len(s.state.AccountResults)-300:]...)
 	}
 }
-func (s *Service) runAccount(parent context.Context, account, model string, p Prompt, manual bool) {
+func (s *Service) runAccount(parent context.Context, epoch uint64, account, model string, p Prompt, manual bool) {
 	defer s.wg.Done()
-	defer func() { s.mu.Lock(); s.accountProbeActive = false; s.mu.Unlock() }()
+	defer s.finishAccountProbe(epoch)
+	if parent.Err() != nil {
+		return
+	}
 	cfg, err := s.reserveRequest()
 	var answer string
 	var tokens int
@@ -195,6 +201,10 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 		r.Error = err.Error()
 	}
 	s.mu.Lock()
+	if !s.probeCurrentLocked(epoch) || parent.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
 	s.addResult(r)
 	routeChanged := false
 	if !manual && p.Automatic {
@@ -225,11 +235,11 @@ func (s *Service) runAccount(parent context.Context, account, model string, p Pr
 	}
 	active := s.state.Route.AutoApply
 	s.mu.Unlock()
-	if routeChanged && active {
+	if routeChanged && active && parent.Err() == nil {
 		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 		_, err := s.ApplyRouting(ctx, false)
 		cancel()
-		if err != nil {
+		if err != nil && parent.Err() == nil {
 			s.noteSchedulerError(fmt.Errorf("账号隔离路由同步失败：%w", err))
 		}
 	}
@@ -243,12 +253,15 @@ func (s *Service) routeHasHold(account string) bool {
 
 // sampleFingerprint collects 3 inputs and returns the existing local scorer
 // verdict. It does not change quarantine holds or objective failure counters.
-func (s *Service) sampleFingerprint(parent context.Context, account, model, expected string, runner FingerprintRunner) (FingerprintReport, string) {
+func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, account, model, expected string, runner FingerprintRunner) (FingerprintReport, string) {
 	challenges := newFingerprintChallenges()
 	batch := Secret()[:12]
 	outputs := []fingerprint.Output{}
 	issue := ""
 	for _, ch := range challenges {
+		if parent.Err() != nil {
+			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch
+		}
 		cfg, err := s.reserveRequest()
 		var answer string
 		var tokens int
@@ -267,6 +280,10 @@ func (s *Service) sampleFingerprint(parent context.Context, account, model, expe
 			r.Answer = r.Answer[:8192]
 		}
 		s.mu.Lock()
+		if !s.probeCurrentLocked(epoch) || parent.Err() != nil {
+			s.mu.Unlock()
+			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch
+		}
 		s.addResult(r)
 		if e := s.store.Save(s.state); e != nil {
 			s.health = e.Error()
