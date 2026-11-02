@@ -483,8 +483,23 @@ $('approveLiveScopes').onclick=()=>action(async()=>{
  const result=await api('/api/routing/adopt-current','POST',{confirm:'APPROVE_CURRENT_PRODUCTION_SCOPES'});
  notice('当前生产白名单已核对并采用，未修改 Gateway Key 文件，隔离记录保持不变。');
 });
+$('resetAllAccountStates').onclick=async()=>{
+ const button=$('resetAllAccountStates');
+ if(button.disabled)return;
+ if(!confirm('将清空所有账号的隔离和检测状态，恢复 Guard 管理的生产 Gateway Key 原始权限，并暂停自动检测与自动隔离。账号设置和检测历史保留。是否继续？'))return;
+ const phrase=prompt('此操作影响全部监测账号及生产 Key。确认请输入 RESET_ALL_ACCOUNT_STATES');
+ if(phrase!=='RESET_ALL_ACCOUNT_STATES')return;
+ button.disabled=true;
+ try{
+  await api('/api/accounts/reset-all','POST',{confirm:phrase});
+  await refresh();
+  notice('全部账号状态已重置，Guard 管理的生产路由已恢复；定时检测及自动隔离已暂停。历史记录和配置未删除。');
+ }catch(e){
+  notice('重置失败，未确认恢复全部路由：'+(e?.message||String(e)),true);
+ }finally{button.disabled=false}
+};
 $('restoreRoute').onclick=()=>action(async()=>{
- const value=prompt('紧急恢复会清除全部隔离记录和自动隔离开关，请输入 RESTORE_ALL_PRODUCTION_KEYS');
+ const value=prompt('紧急恢复将重置全部账号隔离与检测状态、恢复路由并停止定时检测。请输入 RESTORE_ALL_PRODUCTION_KEYS');
  if(value!=='RESTORE_ALL_PRODUCTION_KEYS')return;
  await api('/api/routing/restore','POST',{confirm:value});
 });

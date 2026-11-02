@@ -42,16 +42,20 @@
         <button id="saveAutoSyncAccountRoster" class="subtle">保存同步设置</button>
       </div>
       <p class="hint">同步只修改检测目标，不影响 Gateway Key 白名单。已删除账号会显示为隔离留档并停止检测；旧隔离记录会保留。新增账号从已有监测模型继承检测设置，自动同步需要手动开启。</p>
+      <div class="actions-inline">
+        <button id="resetAllAccountStates" class="danger" type="button">重置全部账号隔离／检测状态</button>
+        <span class="hint">同时恢复 Guard 管理的生产路由并暂停自动检测／隔离；保留账号配置和检测历史。</span>
+      </div>
       <p id="modelHelp" class="hint model-help" role="status">正在读取 Codex 与已登记 API 上游的模型…</p>
       <div class="card table-scroll"><table><thead><tr><th>账号</th><th>模型</th><th>状态</th><th>下次检测</th><th>操作</th></tr></thead><tbody id="accountRows"><tr><td colspan="5" class="empty">正在读取账号信息…</td></tr></tbody></table></div>
       <p class="hint">手动测试不会改变自动隔离次数。所有指纹采样均使用指定账号，禁止路由回退。</p>
     </section>
     <section id="rules" class="page" hidden>
-      <div class="section-head"><div><h1>检测题库</h1><p>全新安装默认通过模型指纹检测结果判断降智；旧安装保留已有题库。指纹题一轮 3 次采样、可靠不一致立即隔离，没有额外指纹复核。</p></div></div>
+      <div class="section-head"><div><h1>检测题库</h1><p>全新安装默认通过模型指纹检测结果判断降智；旧安装保留已有题库。指纹题一轮 3 次采样，连续 3 轮可靠不一致才隔离，没有额外指纹复核。</p></div></div>
       <div class="card form-card">
         <h2>自动检测题</h2><div id="promptOptions" class="check-list"></div>
         <label class="check"><input type="checkbox" id="rotatePrompts"> 按轮次顺序轮换所选检测题</label>
-        <p class="hint">全新安装默认选中模型指纹题来判断降智；模型指纹与牛奶题及自定义题并列选择，没有额外指纹复核。指纹题一轮 3 次采样，可靠不一致立即隔离；普通题同题连续 3 次错误隔离。自动检测不可用也会隔离，直至原题连续 2 次有效通过。</p>
+        <p class="hint">全新安装默认选中模型指纹题来判断降智；模型指纹与牛奶题及自定义题并列选择，没有额外指纹复核。指纹题一轮 3 次采样，连续 3 轮可靠不一致才隔离；普通题同题连续 3 次错误隔离。检测连续 3 轮不可用才隔离；原题连续 2 次有效通过解除隔离。</p>
         <button id="saveAutoPrompts" class="primary">保存自动题库</button>
       </div>
       <div class="card form-card">

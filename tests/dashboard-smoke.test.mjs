@@ -77,6 +77,18 @@ function fixture({modelsError='',apiUpstream=false,freshFingerprint=false}={}){
    state.state.route.last_error='';
    payload={mode:'active',keys:[],quarantined:[]};
   }
+  else if(path==='/api/accounts/reset-all'&&method==='POST'){
+   assert.equal(JSON.parse(options.body).confirm,'RESET_ALL_ACCOUNT_STATES');
+   state.state.route.auto_apply=false;
+   state.state.route.schedule_enabled=false;
+   state.state.holds={};
+   for(const target of Object.values(state.state.account_targets)){
+    target.state='unverified';
+    target.consecutive_fails=0;
+    target.consecutive_unavailable=0;
+   }
+   payload={mode:'observe_only',keys:[],quarantined:[]};
+  }
   else if(path==='/api/config'&&method==='POST'){
    state.gateway_configured=true;
    state.state.config.gateway_url=JSON.parse(options.body).gateway_url;
@@ -376,5 +388,30 @@ test('time policy edits persist global defaults and per-target overrides without
   assert.equal(body.reschedule,false);
   assert.equal(state.state.route.auto_apply,false);
   await new Promise(resolve=>setTimeout(resolve,85));
+ }finally{dom.window.close()}
+});
+
+test('manual all-account reset requires explicit phrase and refreshes cleared states',async()=>{
+ const {dom,w,calls,state}=fixture();
+ try{
+  await waitFor(()=>w.document.querySelector('#resetAllAccountStates'));
+  state.state.route.auto_apply=true;
+  state.state.route.schedule_enabled=true;
+  state.state.holds.aaa={account:'aaa',model:'codex/gpt-6.1-sol'};
+  state.state.account_targets['aaa\x1fcodex/gpt-6.1-sol']={
+   account:'aaa',model:'codex/gpt-6.1-sol',enabled:true,
+   state:'quarantined',consecutive_fails:3,consecutive_unavailable:2
+  };
+  w.prompt=()=> 'WRONG';
+  w.document.querySelector('#resetAllAccountStates').click();
+  assert.equal(calls.filter(c=>c.path==='/api/accounts/reset-all').length,0);
+  w.prompt=()=> 'RESET_ALL_ACCOUNT_STATES';
+  w.document.querySelector('#resetAllAccountStates').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/accounts/reset-all'));
+  await waitFor(()=>w.document.querySelector('#statIsolated').textContent==='0');
+  assert.equal(state.state.route.auto_apply,false);
+  assert.equal(state.state.route.schedule_enabled,false);
+  assert.equal(state.state.account_targets['aaa\x1fcodex/gpt-6.1-sol'].state,'unverified');
+  assert.match(w.document.querySelector('#notice').textContent,/全部账号状态已重置/);
  }finally{dom.window.close()}
 });

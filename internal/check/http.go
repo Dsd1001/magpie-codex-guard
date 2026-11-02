@@ -371,6 +371,24 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		}
 		writeJSON(w, preview)
 	})
+	mux.HandleFunc("POST /api/accounts/reset-all", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Confirm string `json:"confirm"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		if input.Confirm != "RESET_ALL_ACCOUNT_STATES" {
+			http.Error(w, "确认短语错误", http.StatusBadRequest)
+			return
+		}
+		plan, err := s.ApplyRouting(r.Context(), true)
+		if err != nil {
+			apiError(w, err, http.StatusConflict)
+			return
+		}
+		writeJSON(w, plan)
+	})
 	mux.HandleFunc("POST /api/routing/restore", func(w http.ResponseWriter, r *http.Request) {
 		var input struct{ Confirm string }
 		if !decode(w, r, &input) {

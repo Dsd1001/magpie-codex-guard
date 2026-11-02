@@ -375,8 +375,33 @@ func (s *Service) ConfigureRouting(probeKeyID string, active bool, confirm strin
 func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPreview, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if restore && (s.accountProbeActive || len(s.running) > 0) {
+		return RoutingPreview{}, errors.New("仍有检测正在执行，须结束后才能重置全部账号")
+	}
 	if !restore && !s.state.Route.AutoApply {
 		return RoutingPreview{}, errors.New("自动路由仍是观察模式，禁止修改生产 Key")
+	}
+	// Observation-only installs have never changed Magpie's routes. They
+	// should be able to clear monitoring state without even having a key file.
+	if restore && !hasManagedRoutes(s.state.Route) {
+		before, err := json.Marshal(s.state)
+		if err != nil {
+			return RoutingPreview{}, err
+		}
+		resetAllAccountMonitoringState(&s.state)
+		s.state.Route.LastApplied = time.Now()
+		s.state.Route.Audit = append(s.state.Route.Audit, RoutingAudit{At: s.state.Route.LastApplied, Action: "reset"})
+		if len(s.state.Route.Audit) > 100 {
+			s.state.Route.Audit = slices.Clone(s.state.Route.Audit[len(s.state.Route.Audit)-100:])
+		}
+		if err := s.saveLocked(); err != nil {
+			var previous State
+			if json.Unmarshal(before, &previous) == nil {
+				s.state = previous
+			}
+			return RoutingPreview{}, err
+		}
+		return RoutingPreview{Mode: "observe_only", ProbeKeyID: s.state.Route.ProbeKeyID}, nil
 	}
 	dir, err := MagpieDir()
 	if err != nil {
@@ -395,10 +420,10 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	if err != nil {
 		return RoutingPreview{}, err
 	}
-	if err = verifyProbeKey(s.state, keys); err != nil {
-		return RoutingPreview{}, err
-	}
 	if !restore {
+		if err = verifyProbeKey(s.state, keys); err != nil {
+			return RoutingPreview{}, err
+		}
 		// A deletion-only administrator edit cannot widen access.
 		// Adopt it in the PRIVATE baseline after verifying all existing
 		// quarantines remain excluded. This does not write caller-keys.json.
@@ -406,26 +431,16 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 			return RoutingPreview{}, err
 		}
 	}
-	projected := s.state
+	var preview RoutingPreview
+	var baselines map[string][]string
+	var offBaselines map[string]bool
 	if restore {
-		projected.Route.Quarantined = nil
-		projected.Holds = map[string]QuarantineHold{}
-		projected.AccountTargets = make(map[string]*AccountTarget, len(s.state.AccountTargets))
-		for key, t := range s.state.AccountTargets {
-			// Preview must never mutate the actual state before the key
-			// file and the journal are both safely committed.
-			copy := *t
-			copy.ConsecutiveFails = 0
-			projected.AccountTargets[key] = &copy
-		}
+		preview, baselines, offBaselines, err = makeResetRoutingPreview(s.state, keys, codex)
+	} else {
+		preview, baselines, offBaselines, err = makeRoutingPreview(s.state, keys, codex)
 	}
-	preview, baselines, offBaselines, err := makeRoutingPreview(projected, keys, codex)
 	if err != nil {
 		return RoutingPreview{}, err
-	}
-	if restore {
-		preview.Mode = "observe_only"
-		preview.Quarantined = nil
 	}
 	after := map[string][]string{}
 	afterOff := map[string]bool{}
@@ -481,7 +496,7 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		if previous.LastError != "" {
 			different = true
 		}
-		if !different {
+		if !different && !restore {
 			return preview, nil
 		}
 		s.state.Route.Baselines = baselines
@@ -493,14 +508,16 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		s.state.Route.Quarantined = quarantineSet(preview.Quarantined)
 		s.state.Route.LastError = ""
 		if restore {
-			s.state.Route.AutoApply = false
-			s.state.Route.Quarantined = nil
-			s.state.Holds = map[string]QuarantineHold{}
-			for _, t := range s.state.AccountTargets {
-				t.ConsecutiveFails = 0
+			resetAllAccountMonitoringState(&s.state)
+			s.state.Route.LastApplied = time.Now()
+			s.state.Route.Audit = append(s.state.Route.Audit, RoutingAudit{
+				At: s.state.Route.LastApplied, Action: "reset", KeyCount: len(keys),
+			})
+			if len(s.state.Route.Audit) > 100 {
+				s.state.Route.Audit = slices.Clone(s.state.Route.Audit[len(s.state.Route.Audit)-100:])
 			}
 		}
-		return preview, s.store.Save(s.state)
+		return preview, s.saveLocked()
 	}
 
 	// Persist both the baseline and desired state BEFORE replacing Magpie's
@@ -563,18 +580,13 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	route.PendingQuarantine = nil
 	route.Quarantined = quarantineSet(preview.Quarantined)
 	if restore {
-		route.AutoApply = false
-		route.Quarantined = nil
-		s.state.Holds = map[string]QuarantineHold{}
-		for _, t := range s.state.AccountTargets {
-			t.ConsecutiveFails = 0
-		}
+		resetAllAccountMonitoringState(&s.state)
 	}
 	route.LastError = ""
 	route.LastApplied = time.Now()
 	action := "quarantine"
 	if restore {
-		action = "restore"
+		action = "reset"
 	}
 	route.Audit = append(route.Audit, RoutingAudit{At: route.LastApplied, Action: action, KeyCount: len(after), Quarantined: slices.Clone(preview.Quarantined)})
 	if len(route.Audit) > 100 {
@@ -653,16 +665,9 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 		return "", errors.New("路由状态混合或被外部更改，拒绝自动恢复；需要管理员人工核对")
 	}
 	action := "completed"
+	completedReset := afterOK && route.PendingRestore
 	if afterOK {
 		route.Quarantined = quarantineSet(route.PendingQuarantine)
-		if route.PendingRestore {
-			route.AutoApply = false
-			route.Quarantined = nil
-			s.state.Holds = map[string]QuarantineHold{}
-			for _, t := range s.state.AccountTargets {
-				t.ConsecutiveFails = 0
-			}
-		}
 	} else {
 		route.Expected = route.Previous
 		route.ExpectedOff = route.PreviousOff
@@ -677,6 +682,9 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 	route.PreviousOff = nil
 	route.ModelPrevious = nil
 	route.PendingQuarantine = nil
+	if completedReset {
+		resetAllAccountMonitoringState(&s.state)
+	}
 	route.Audit = append(route.Audit, RoutingAudit{At: time.Now(), Action: "recover-" + action, KeyCount: len(keys), Quarantined: sortedQuarantined(route.Quarantined)})
 	if len(route.Audit) > 100 {
 		route.Audit = slices.Clone(route.Audit[len(route.Audit)-100:])
