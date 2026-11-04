@@ -72,6 +72,17 @@ unavailable and quarantines conservatively.
   does not alter Magpie's group authorization semantics.
 - Codex quarantine continues to use native account allowlists. API identities
   do not change the expected Codex login count.
+- Ordinary Codex account quarantine never owns Gateway Key `models`. Changes
+  to unrelated provider scopes such as `cybersol/*` are retained and adopted
+  without interrupting Codex account isolation. Explicit API upstream holds
+  still control only their enrolled provider model access.
+- When no Codex login can safely route, a finite list of qualified provider
+  models lets the guard temporarily remove Codex model entries only, leaving
+  healthy unrelated provider permissions intact. This exceptional protection
+  is undone as soon as an eligible Codex account is available. Unrestricted
+  scopes or unknown/group aliases cannot prove safe isolation, so the key
+  remains disabled until recovery. A bare automatic model group may still
+  be rejected during the all-Codex-held period; use a qualified healthy model.
 
 Fingerprint scores are statistical comparisons with the selected reference;
 they do not prove the upstream model's identity. For example, the reference

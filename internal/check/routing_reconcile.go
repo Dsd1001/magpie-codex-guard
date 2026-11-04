@@ -98,6 +98,23 @@ func verifyHeldAccountsExcluded(state State, keys []privateGatewayKey, codex []C
 		if len(held) == 0 {
 			continue
 		}
+		// All-Codex-held fallback: explicit non-Codex-only model scopes
+		// prevent Codex routing even if the historical account list contains
+		// held Codex IDs. This is not permission to trust an auto group alias.
+		if len(k.Models) > 0 {
+			dir, err := MagpieDir()
+			if err != nil {
+				return err
+			}
+			providers, err := apiProviderNames(dir)
+			if err != nil {
+				return err
+			}
+			withoutCodex, safe := nonCodexModelScopes(k.Models, providers)
+			if safe && slices.Equal(withoutCodex, k.Models) {
+				continue
+			}
+		}
 		codexScoped := false
 		for _, ref := range k.Accounts {
 			provider, id, found := strings.Cut(ref, "/")

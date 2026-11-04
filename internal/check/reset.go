@@ -75,10 +75,17 @@ func makeResetRoutingPreview(state State, keys []privateGatewayKey, codex []Code
 			if !exists {
 				return RoutingPreview{}, nil, nil, fmt.Errorf("生产 Key %s 缺少原始模型白名单，拒绝重置", key.ID)
 			}
-			if !slices.Equal(key.Models, expected) {
-				return RoutingPreview{}, nil, nil, fmt.Errorf("生产 Key %s 模型白名单已被外部修改，需人工核对后重置", key.ID)
+			// If Guard has never applied a model restriction to this Key,
+			// its stored model scope was only a snapshot, not an owned
+			// permission. Preserve later administrator/provider edits.
+			if slices.Equal(expected, base) {
+				models = slices.Clone(key.Models)
+			} else {
+				if !slices.Equal(key.Models, expected) {
+					return RoutingPreview{}, nil, nil, fmt.Errorf("生产 Key %s 模型白名单已被外部修改，需人工核对后重置", key.ID)
+				}
+				models = slices.Clone(base)
 			}
-			models = slices.Clone(base)
 		} else if _, hasBaseline := route.ModelBaselines[key.ID]; hasBaseline {
 			return RoutingPreview{}, nil, nil, fmt.Errorf("生产 Key %s 缺少模型写入记录，拒绝重置", key.ID)
 		}

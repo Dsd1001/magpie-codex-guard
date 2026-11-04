@@ -5,8 +5,8 @@ import { chmod, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 
-const RELEASE = 'v0.1.0-alpha.30';
-const RELEASE_FILE = 'magpie-codex-guard-0.1.0-alpha.30.tgz';
+const RELEASE = 'v0.1.0-alpha.31';
+const RELEASE_FILE = 'magpie-codex-guard-0.1.0-alpha.31.tgz';
 const ARCHIVE_URL =
   `https://github.com/Dsd1001/magpie-codex-guard/releases/download/${RELEASE}/${RELEASE_FILE}`;
 const ARCHIVE_SHA256 = '202bbee0326c9f79eb00fc67405b69a218b7faece40b8ff3bbbe3b81910e1dba';
@@ -79,7 +79,7 @@ export async function resolveBinary({ root, dataDir, binaryPath, fetcher = fetch
   try {
     const response = await fetcher(ARCHIVE_URL, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'magpie-codex-guard/0.1.0-alpha.30' },
+      headers: { 'User-Agent': 'magpie-codex-guard/0.1.0-alpha.31' },
     });
     if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
     const length = Number(response.headers?.get?.('content-length') || 0);

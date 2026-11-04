@@ -70,7 +70,23 @@ jobs:
           test -s "$ARCHIVE"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Immutable alpha release already exists; preserving published checksums for $TAG"
-            exit 0
+          else
+            sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
+            gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.31: isolate Codex accounts by account selection, preserve unrelated provider model permissions, and retain healthy API routing when all Codex accounts are quarantined; keep strict fail-closed fallback and fingerprint schedules."
           fi
-          sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-          gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.30: one complete reliable fingerprint mismatch immediately isolates; HTTP 401/404 immediately isolates; 429/timeout/incomplete samples isolate after three unavailable rounds, preserving custom schedules and safe route restore."
+      - name: Pin the just-published verified alpha.31 runtime in source installs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          gh release download "$TAG" --pattern SHA256SUMS --dir dist --clobber
+          python3 scripts/pin-runtime-checksums.py dist/SHA256SUMS
+          if ! git diff --quiet -- plugin/runtime.mjs; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add plugin/runtime.mjs
+            git commit -m "chore(release): pin verified ${TAG} runtime [skip ci]"
+            git push origin 'HEAD:refs/heads/main'
+          fi

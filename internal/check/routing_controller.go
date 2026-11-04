@@ -459,18 +459,29 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		}
 		changed = true
 		if len(plan.After) == 0 && len(preview.Quarantined) > 0 && !plan.OffAfter && len(heldAPIProviders(s.state)) == 0 {
-			return RoutingPreview{}, errors.New("隔离后空白名单将误放行全部账号，拒绝写入")
+			providers, err := apiProviderNames(dir)
+			if err != nil {
+				return RoutingPreview{}, err
+			}
+			withoutCodex, safe := nonCodexModelScopes(plan.ModelsAfter, providers)
+			if !safe || !slices.Equal(withoutCodex, plan.ModelsAfter) {
+				return RoutingPreview{}, errors.New("隔离后空白名单将误放行全部账号，拒绝写入")
+			}
 		}
 		data, err := json.Marshal(plan.After)
 		if err != nil {
 			return RoutingPreview{}, err
 		}
 		rawKeys[i]["accounts"] = data
-		modelData, err := json.Marshal(plan.ModelsAfter)
-		if err != nil {
-			return RoutingPreview{}, err
+		// Account quarantine must not rewrite an administrator's independent
+		// provider model picks. Preserve the original raw field if unchanged.
+		if !slices.Equal(keys[i].Models, plan.ModelsAfter) {
+			modelData, err := json.Marshal(plan.ModelsAfter)
+			if err != nil {
+				return RoutingPreview{}, err
+			}
+			rawKeys[i]["models"] = modelData
 		}
-		rawKeys[i]["models"] = modelData
 		if plan.OffAfter {
 			rawKeys[i]["off"] = json.RawMessage("true")
 		} else {
