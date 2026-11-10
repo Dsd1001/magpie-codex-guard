@@ -20,27 +20,36 @@ import (
 // RoutingState persists original permissions and a write-ahead journal. No
 // production route is ever modified without explicit opt-in.
 type RoutingState struct {
-	ExpectedCodexCount int                 `json:"expected_codex_count,omitempty"`
-	ProbeKeyID         string              `json:"probe_key_id,omitempty"`
-	ScheduleEnabled    bool                `json:"schedule_enabled"`
-	AutoSyncAccounts   bool                `json:"auto_sync_accounts,omitempty"`
-	AutoApply          bool                `json:"auto_apply"`
-	Baselines          map[string][]string `json:"baselines,omitempty"`
-	Expected           map[string][]string `json:"expected,omitempty"`
-	BaselineOff        map[string]bool     `json:"baseline_off,omitempty"`
-	ExpectedOff        map[string]bool     `json:"expected_off,omitempty"`
-	PreviousOff        map[string]bool     `json:"previous_off,omitempty"`
-	Previous           map[string][]string `json:"previous,omitempty"`
-	PendingQuarantine  []string            `json:"pending_quarantine,omitempty"`
-	Quarantined        map[string]bool     `json:"quarantined,omitempty"`
-	Pending            bool                `json:"pending"`
-	PendingRestore     bool                `json:"pending_restore,omitempty"`
-	LastError          string              `json:"last_error,omitempty"`
-	LastApplied        time.Time           `json:"last_applied,omitempty"`
-	Audit              []RoutingAudit      `json:"audit,omitempty"`
-	ModelBaselines     map[string][]string `json:"model_baselines,omitempty"`
-	ModelExpected      map[string][]string `json:"model_expected,omitempty"`
-	ModelPrevious      map[string][]string `json:"model_previous,omitempty"`
+	ExpectedCodexCount     int                 `json:"expected_codex_count,omitempty"`
+	ProbeKeyID             string              `json:"probe_key_id,omitempty"`
+	ScheduleEnabled        bool                `json:"schedule_enabled"`
+	AutoSyncAccounts       bool                `json:"auto_sync_accounts,omitempty"`
+	AutoApply              bool                `json:"auto_apply"`
+	Baselines              map[string][]string `json:"baselines,omitempty"`
+	Expected               map[string][]string `json:"expected,omitempty"`
+	BaselineOff            map[string]bool     `json:"baseline_off,omitempty"`
+	ExpectedOff            map[string]bool     `json:"expected_off,omitempty"`
+	PreviousOff            map[string]bool     `json:"previous_off,omitempty"`
+	Previous               map[string][]string `json:"previous,omitempty"`
+	PendingQuarantine      []string            `json:"pending_quarantine,omitempty"`
+	Quarantined            map[string]bool     `json:"quarantined,omitempty"`
+	Pending                bool                `json:"pending"`
+	PendingRestore         bool                `json:"pending_restore,omitempty"`
+	LastError              string              `json:"last_error,omitempty"`
+	LastApplied            time.Time           `json:"last_applied,omitempty"`
+	Audit                  []RoutingAudit      `json:"audit,omitempty"`
+	ModelBaselines         map[string][]string `json:"model_baselines,omitempty"`
+	ModelExpected          map[string][]string `json:"model_expected,omitempty"`
+	ModelPrevious          map[string][]string `json:"model_previous,omitempty"`
+	GroupOffBaselines      map[string][]string `json:"group_off_baselines,omitempty"`
+	GroupOffExpected       map[string][]string `json:"group_off_expected,omitempty"`
+	GroupOffMembers        map[string][]string `json:"group_off_members,omitempty"`
+	GroupOffPrevious       map[string][]string `json:"group_off_previous,omitempty"`
+	GroupOffTarget         map[string][]string `json:"group_off_target,omitempty"`
+	GroupOffPendingMembers map[string][]string `json:"group_off_pending_members,omitempty"`
+	GroupOffNextBaselines  map[string][]string `json:"group_off_next_baselines,omitempty"`
+	GroupOffNextExpected   map[string][]string `json:"group_off_next_expected,omitempty"`
+	GroupOffNextMembers    map[string][]string `json:"group_off_next_members,omitempty"`
 }
 
 type RoutingAudit struct {
@@ -417,6 +426,15 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		return RoutingPreview{}, errors.New("无法取得 Magpie Gateway Key 文件锁，未进行路由更新")
 	}
 	defer lock.Unlock()
+	// Serialize Guard-owned updates of both Magpie configuration files.
+	// Magpie loads providers.json atomically; this extra lock prevents two
+	// Guard runs from racing and keeps the crash journal consistent.
+	providersLock := flock.New(filepath.Join(dir, "providers.json.lock"))
+	groupLocked, groupErr := providersLock.TryLockContext(waitCtx, 20*time.Millisecond)
+	if groupErr != nil || !groupLocked {
+		return RoutingPreview{}, errors.New("无法取得 Magpie Providers 文件锁，未进行路由更新")
+	}
+	defer providersLock.Unlock()
 
 	codex, rawKeys, keys, err := readRouterInputs(dir)
 	if err != nil {
@@ -441,6 +459,10 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	} else {
 		preview, baselines, offBaselines, err = makeRoutingPreview(s.state, keys, codex)
 	}
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	groups, err := planRoutingGroupOff(dir, s.state.Route, codex, preview.Quarantined, restore)
 	if err != nil {
 		return RoutingPreview{}, err
 	}
@@ -488,7 +510,7 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 			rawKeys[i]["off"] = json.RawMessage("false")
 		}
 	}
-	if !changed {
+	if !changed && !groups.changed {
 		// A new key's baseline must be remembered even if it needs no
 		// rewrite. Avoid a pointless SQLite fsync every scheduler tick.
 		previous := s.state.Route
@@ -498,6 +520,11 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 			different = true
 		}
 		if !maps.Equal(previous.BaselineOff, offBaselines) || !maps.Equal(previous.ExpectedOff, afterOff) {
+			different = true
+		}
+		if !maps.EqualFunc(previous.GroupOffBaselines, groups.baselines, slices.Equal) ||
+			!maps.EqualFunc(previous.GroupOffExpected, groups.expected, slices.Equal) ||
+			!maps.EqualFunc(previous.GroupOffMembers, groups.members, slices.Equal) {
 			different = true
 		}
 		if !slices.Equal(sortedQuarantined(previous.Quarantined), preview.Quarantined) {
@@ -518,6 +545,9 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		s.state.Route.ModelExpected = afterModels
 		s.state.Route.BaselineOff = offBaselines
 		s.state.Route.ExpectedOff = afterOff
+		s.state.Route.GroupOffBaselines = groups.baselines
+		s.state.Route.GroupOffExpected = groups.expected
+		s.state.Route.GroupOffMembers = groups.members
 		s.state.Route.Quarantined = quarantineSet(preview.Quarantined)
 		s.state.Route.LastError = ""
 		if restore {
@@ -539,6 +569,12 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 	route.Pending = true
 	route.PendingRestore = restore
 	route.Previous = make(map[string][]string, len(keys))
+	route.GroupOffPrevious = clonedScopes(groups.before)
+	route.GroupOffTarget = clonedScopes(groups.target)
+	route.GroupOffPendingMembers = clonedScopes(groups.pendingMembers)
+	route.GroupOffNextBaselines = clonedScopes(groups.baselines)
+	route.GroupOffNextExpected = clonedScopes(groups.expected)
+	route.GroupOffNextMembers = clonedScopes(groups.members)
 	route.PreviousOff = make(map[string]bool, len(keys))
 	route.ModelPrevious = make(map[string][]string, len(keys))
 	for _, k := range keys {
@@ -585,11 +621,28 @@ func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPrevie
 		_ = s.store.Save(s.state)
 		return RoutingPreview{}, err
 	}
+	// Key permissions are already restrictive here. Only now change the
+	// global auto-group routing candidates. A crash leaves the journal
+	// pending, never silently restoring a quarantined Codex account.
+	if err := writeGroupOffDocument(dir, groups); err != nil {
+		route.LastError = "自动路由组更新失败；需恢复未完成的路由事务"
+		_ = s.store.Save(s.state)
+		return RoutingPreview{}, err
+	}
+	route.GroupOffBaselines = clonedScopes(groups.baselines)
+	route.GroupOffExpected = clonedScopes(groups.expected)
+	route.GroupOffMembers = clonedScopes(groups.members)
 	route.Pending = false
 	route.PendingRestore = false
 	route.Previous = nil
 	route.PreviousOff = nil
 	route.ModelPrevious = nil
+	route.GroupOffPrevious = nil
+	route.GroupOffTarget = nil
+	route.GroupOffPendingMembers = nil
+	route.GroupOffNextBaselines = nil
+	route.GroupOffNextExpected = nil
+	route.GroupOffNextMembers = nil
 	route.PendingQuarantine = nil
 	route.Quarantined = quarantineSet(preview.Quarantined)
 	if restore {
@@ -653,6 +706,12 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 		return "", errors.New("无法取得 Magpie Gateway Key 文件锁")
 	}
 	defer lock.Unlock()
+	providersLock := flock.New(filepath.Join(dir, "providers.json.lock"))
+	groupLocked, groupErr := providersLock.TryLockContext(wait, 20*time.Millisecond)
+	if groupErr != nil || !groupLocked {
+		return "", errors.New("无法取得 Magpie Providers 文件锁")
+	}
+	defer providersLock.Unlock()
 	_, keys, err := loadKeyDocuments(filepath.Join(dir, "caller-keys.json"))
 	if err != nil {
 		return "", err
@@ -677,10 +736,31 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 	if !beforeOK && !afterOK {
 		return "", errors.New("路由状态混合或被外部更改，拒绝自动恢复；需要管理员人工核对")
 	}
+	groupBefore, groupAfter, err := groupOffJournalStatus(dir, *route)
+	if err != nil {
+		return "", err
+	}
+	if !groupBefore && !groupAfter {
+		return "", errors.New("路由组 Off 状态与事务记录不一致，拒绝自动恢复")
+	}
+	if afterOK && !groupAfter && groupBefore {
+		// The key restriction was applied before the group switch. Finish
+		// only the group update whose exact before image is still present.
+		if err := completeGroupOffJournal(dir, *route); err != nil {
+			return "", err
+		}
+		groupAfter = true
+	}
+	if (!afterOK || !groupAfter) && (!beforeOK || !groupBefore) {
+		return "", errors.New("Gateway Key 和路由组处于混合状态，拒绝自动恢复")
+	}
 	action := "completed"
-	completedReset := afterOK && route.PendingRestore
-	if afterOK {
+	completedReset := afterOK && groupAfter && route.PendingRestore
+	if afterOK && groupAfter {
 		route.Quarantined = quarantineSet(route.PendingQuarantine)
+		route.GroupOffBaselines = clonedScopes(route.GroupOffNextBaselines)
+		route.GroupOffExpected = clonedScopes(route.GroupOffNextExpected)
+		route.GroupOffMembers = clonedScopes(route.GroupOffNextMembers)
 	} else {
 		route.Expected = route.Previous
 		route.ExpectedOff = route.PreviousOff
@@ -694,6 +774,12 @@ func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
 	route.Previous = nil
 	route.PreviousOff = nil
 	route.ModelPrevious = nil
+	route.GroupOffPrevious = nil
+	route.GroupOffTarget = nil
+	route.GroupOffPendingMembers = nil
+	route.GroupOffNextBaselines = nil
+	route.GroupOffNextExpected = nil
+	route.GroupOffNextMembers = nil
 	route.PendingQuarantine = nil
 	if completedReset {
 		resetAllAccountMonitoringState(&s.state)

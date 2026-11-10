@@ -15,7 +15,8 @@ func hasManagedRoutes(route RoutingState) bool {
 		len(route.Quarantined) > 0 ||
 		len(route.Baselines) > 0 || len(route.Expected) > 0 ||
 		len(route.BaselineOff) > 0 || len(route.ExpectedOff) > 0 ||
-		len(route.ModelBaselines) > 0 || len(route.ModelExpected) > 0
+		len(route.ModelBaselines) > 0 || len(route.ModelExpected) > 0 ||
+		len(route.GroupOffBaselines) > 0 || len(route.GroupOffExpected) > 0
 }
 
 // makeResetRoutingPreview restores only Guard-managed fields to their recorded
@@ -145,5 +146,14 @@ func resetAllAccountMonitoringState(state *State) {
 	route.ModelExpected = nil
 	route.BaselineOff = nil
 	route.ExpectedOff = nil
+	route.GroupOffBaselines = nil
+	route.GroupOffExpected = nil
+	route.GroupOffMembers = nil
+	route.GroupOffPrevious = nil
+	route.GroupOffTarget = nil
+	route.GroupOffPendingMembers = nil
+	route.GroupOffNextBaselines = nil
+	route.GroupOffNextExpected = nil
+	route.GroupOffNextMembers = nil
 	route.LastError = ""
 }

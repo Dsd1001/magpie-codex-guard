@@ -72,9 +72,9 @@ jobs:
             echo "Immutable alpha release already exists; preserving published checksums for $TAG"
           else
             sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-            gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.31: isolate Codex accounts by account selection, preserve unrelated provider model permissions, and retain healthy API routing when all Codex accounts are quarantined; keep strict fail-closed fallback and fingerprint schedules."
+            gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.32: safely keep auto/gpt models available through independent providers when all Codex accounts are quarantined; temporarily switch auto-group Codex members Off, preserve prior administrator Off choices, and restore dynamically with crash-journal recovery. Includes alpha.31 scope protections and fingerprint schedules."
           fi
-      - name: Pin the just-published verified alpha.31 runtime in source installs
+      - name: Pin the just-published verified alpha.32 runtime in source installs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
