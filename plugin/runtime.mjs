@@ -9,12 +9,12 @@ const RELEASE = 'v0.1.0-alpha.32';
 const RELEASE_FILE = 'magpie-codex-guard-0.1.0-alpha.32.tgz';
 const ARCHIVE_URL =
   `https://github.com/Dsd1001/magpie-codex-guard/releases/download/${RELEASE}/${RELEASE_FILE}`;
-const ARCHIVE_SHA256 = 'e785f9a1c4f1ee7094d60e601f2c253bed9e06cfbc6582cbe8b629730d4355ba';
+const ARCHIVE_SHA256 = '9f60276c617b15f85037266ad74a7f68227ccae9d98828d4b15b206a87cfd1ba';
 const MAX_ARCHIVE_BYTES = 60 * 1024 * 1024;
 const BINARIES = Object.freeze({
-  'linux-amd64': 'b5a17b47a903e448b7b6fcb1b26ea0c4626334e3c2cfa7c8d4059f135b7d6602',
-  'linux-arm64': '0049d89a0ba21c7192ac9c11d042f45543485bb0b504d3b80e26ca50d338ddfb',
-  'darwin-arm64': '3eaa135aab703bc6410479b65583b5cd2ce87b88b94d84cf313875e6596bfd85',
+  'linux-amd64': '8d75041ff223f45cad8fe09c4ac5ed43f372828e151b320e97bf3cbb773ca752',
+  'linux-arm64': '7ebfb70d8c81068e13204e4b01a4bcf2181055ea9c43167812906a718a0ad8a9',
+  'darwin-arm64': '93b59ae435586aa6416224199823fa68eb068cd8d266365121c86de82a7034db',
 });
 
 async function fileDigest(file) {
