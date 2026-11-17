@@ -5,16 +5,16 @@ import { chmod, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 
-const RELEASE = 'v0.1.0-alpha.32';
-const RELEASE_FILE = 'magpie-codex-guard-0.1.0-alpha.32.tgz';
+const RELEASE = 'v0.1.0-alpha.33';
+const RELEASE_FILE = 'magpie-codex-guard-0.1.0-alpha.33.tgz';
 const ARCHIVE_URL =
   `https://github.com/Dsd1001/magpie-codex-guard/releases/download/${RELEASE}/${RELEASE_FILE}`;
-const ARCHIVE_SHA256 = '9f60276c617b15f85037266ad74a7f68227ccae9d98828d4b15b206a87cfd1ba';
+const ARCHIVE_SHA256 = 'aa1b70e4c6b9af5e72d6c5230ae44cade78a79d0e82f8f5fac9e5c205182cad7';
 const MAX_ARCHIVE_BYTES = 60 * 1024 * 1024;
 const BINARIES = Object.freeze({
-  'linux-amd64': '8d75041ff223f45cad8fe09c4ac5ed43f372828e151b320e97bf3cbb773ca752',
-  'linux-arm64': '7ebfb70d8c81068e13204e4b01a4bcf2181055ea9c43167812906a718a0ad8a9',
-  'darwin-arm64': '93b59ae435586aa6416224199823fa68eb068cd8d266365121c86de82a7034db',
+  'linux-amd64': '21c8d3be78ec1d472224ae7cf2f4769d02f1c619275f6e96255ee5a3c577b3d4',
+  'linux-arm64': 'a1d820337a38830b5cb8b3b336314132efd4240811899a6c326ea2b6b36900ac',
+  'darwin-arm64': '37ca4d0602e2557f68755687b32e60a03c0ba8eee35eb1bed203f21ce998950a',
 });
 
 async function fileDigest(file) {
@@ -79,7 +79,7 @@ export async function resolveBinary({ root, dataDir, binaryPath, fetcher = fetch
   try {
     const response = await fetcher(ARCHIVE_URL, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'magpie-codex-guard/0.1.0-alpha.32' },
+      headers: { 'User-Agent': 'magpie-codex-guard/0.1.0-alpha.33' },
     });
     if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
     const length = Number(response.headers?.get?.('content-length') || 0);
