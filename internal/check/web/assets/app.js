@@ -8,7 +8,7 @@ let fingerprintModels=[];
 let fingerprintModelsError='';
 const stateLabels={
  passed:['正常','ok'], suspect:['疑似异常','low'], checking:['检测中','pending'],
- unverified:['待检测','pending'], unavailable:['不可用','pending'],
+ unverified:['待检测','pending'], unavailable:['不可用','pending'], connection_error:['检测连接故障','pending'],
  fingerprint_pending:['历史待复核','pending'], quarantined_high:['已隔离','high'],
  quarantined_low:['已隔离','high'], quarantined:['已隔离','high'], recovery_confirm:['恢复确认','low']
 };
@@ -77,8 +77,8 @@ function renderSummary(){
  $('statPending').textContent=String(ids.filter(id=>!held[id]&&targets.some(t=>t.account===id&&t.state==='suspect')).length);
  $('statHealthy').textContent=String(ids.filter(id=>!held[id]&&targets.some(t=>t.account===id&&t.state==='passed')).length);
  const active=s.route?.auto_apply;
- $('liveStatus').textContent=s.route?.pending?'路由事务待确认':s.route?.last_error?'路由同步异常':active?'自动隔离已启用':'仅观察 · 未修改生产路由';
- $('liveStatus').title=s.route?.last_error||'';
+ $('liveStatus').textContent=current.connection_error?'检测连接需配置':s.route?.pending?'路由同步重试中':s.route?.last_error?'检测或同步异常':s.route?.awaiting_detection?'等待新的有效检测':active?'自动隔离已启用':'仅观察 · 不自动修改路由';
+ $('liveStatus').title=current.connection_error||s.route?.last_error||'';
 }
 function renderSelectors(){
  option($('accountSelect'),accounts().map(a=>[a.id,a.user]),'选择账号或 API 上游');
@@ -117,11 +117,12 @@ function renderAccounts(){
   const label=elem('span',`pill ${(hold?'high':t.state==='suspect'?'low':t.state==='passed'?'ok':'pending')}`,
    hold?'已隔离':(stateLabels[t.state]?.[0]||t.state));
   st.append(label);
+  if(t.state==='connection_error'&&t.reason)st.append(elem('div','hint',t.reason));
   if(missing)st.append(elem('div','hint','账号已删除 · 停止检测 · 隔离留档保留'));
   if(hold&&s.route?.auto_apply&&!s.route?.quarantined?.[t.account]){
    const warning=elem('div','hint','路由尚未确认排除');st.append(warning);
   }
-  const due=elem('td','mono',fmtTime(hold?.next_check_at||t.next_check_at));
+  const due=elem('td','mono',fmtTime(t.state==='connection_error'?t.next_check_at:(hold?.next_check_at||t.next_check_at)));
   const ops=elem('td');
   const bar=elem('div','actions-inline');
   const test=accountButton('手动测试',()=>submitManualTest(t.account,t.model,chosenPrompt()));
@@ -311,10 +312,8 @@ function renderTiming(force=false){
 
 function renderSettings(){
  const s=current.state;
- if(document.activeElement!==$('autoSyncAccountRoster'))$('autoSyncAccountRoster').checked=Boolean(s.route?.auto_sync_accounts);
  if(document.activeElement!==$('gatewayURL'))$('gatewayURL').value=s.config?.gateway_url||'';
  if(document.activeElement!==$('dailyLimit'))$('dailyLimit').value=s.config?.daily_limit||600;
- if(document.activeElement!==$('expectedCount'))$('expectedCount').value=s.route?.expected_codex_count||0;
  if(document.activeElement!==$('probeKey') && s.route?.probe_key_id)$('probeKey').value=s.route.probe_key_id;
  $('enableSchedule').checked=Boolean(s.route?.schedule_enabled);
  $('enableRouting').checked=Boolean(s.route?.auto_apply);
@@ -368,16 +367,6 @@ $('syncAccountRoster').onclick=async()=>{
   await refresh();
   notice('账号已同步：Magpie 当前 '+result.live_count+' 个账号；新增监测 '+result.added+' 项，已删除账号留档 '+result.missing+' 项。');
  }catch(e){notice('同步账号失败：'+(e?.message||String(e)),true)}
-};
-$('saveAutoSyncAccountRoster').onclick=async()=>{
- const enabled=$('autoSyncAccountRoster').checked;
- if(enabled&&!confirm('开启后自动监测 Magpie 新增加的 Codex 账号，将使用已有监测模型和独立检测 Key，消耗检测请求额度。不会自动扩大生产白名单。确认开启？'))return;
- try{
-  await api('/api/account-targets/auto-sync','POST',{enabled,confirm:enabled?'AUTO_SYNC_CODEX_ACCOUNTS':''});
-  if(enabled)await api('/api/account-targets/sync','POST',{confirm:'SYNC_LIVE_CODEX_TARGETS'});
-  await refresh();
-  notice(enabled?'账号自动同步已启用；已从 Magpie 更新监测目标。':'账号自动同步已关闭；原有监测目标保留。');
- }catch(e){notice('保存账号同步设置失败：'+(e?.message||String(e)),true)}
 };
 $('manualPrompt').onchange=updateFingerprintExpected;
 $('manualTarget').onchange=updateFingerprintExpected;
@@ -448,28 +437,23 @@ $('saveTiming').onclick=()=>action(async()=>{
 
 $('saveConfig').onclick=async()=>{
  try{
-  await api('/api/config','POST',{gateway_url:$('gatewayURL').value,gateway_key:$('gatewayKey').value,daily_limit:Number($('dailyLimit').value)});
-  $('gatewayKey').value='';
+  await api('/api/config','POST',{gateway_url:$('gatewayURL').value,daily_limit:Number($('dailyLimit').value)});
   await refresh();
   const loaded=await loadModels();
   notice(loaded?'检测连接已保存，模型列表已刷新':'检测连接已保存，但模型加载失败：'+modelsError,!loaded);
  }catch(e){notice('保存检测连接失败：'+(e?.message||String(e)),true)}
 };
 $('saveRoute').onclick=()=>action(async()=>{
- const auto=$('enableRouting').checked;
- const body={
-  probe_key_id:$('probeKey').value,auto_apply:auto,
-  schedule_enabled:$('enableSchedule').checked,expected_count:Number($('expectedCount').value),
-  confirm:auto?$('routeConfirm').value:''
- };
- if(auto&&!confirm('确认 Codex Guard 接管全部生产 Gateway Key 的账号隔离路由？'))return;
- await api('/api/routing/config','POST',body);
- $('routeConfirm').value='';
+ await api('/api/routing/config','POST',{
+  probe_key_id:$('probeKey').value,auto_apply:$('enableRouting').checked,
+  schedule_enabled:$('enableSchedule').checked
+ });
+ await loadModels();
 });
 $('previewRoute').onclick=()=>action(async()=>{
  const plan=await api('/api/routing/preview');
  const keyNames=new Map((current.keys||[]).map(k=>[k.id,k.name]));
- const parts=[`路由模式：${plan.mode}`,`隔离账号数：${plan.quarantined?.length||0}`];
+ const parts=[`路由模式：${plan.mode}`,`隔离账号数：${plan.quarantined?.length||0}`,`待检测或排除账号数：${plan.excluded?.length||0}`];
  for(const p of plan.keys||[]){
   const note=p.is_probe?'（检测专用）':p.off_after?' · 暂时停用':p.off_before&&!p.off_after?' · 恢复启用':'';
   parts.push(`${keyNames.get(p.key_id)||'Gateway Key'}：白名单 ${p.before?.length||0} → ${p.after?.length||0} 条${note}`);
@@ -477,32 +461,23 @@ $('previewRoute').onclick=()=>action(async()=>{
  $('routePreview').textContent=parts.join('\n');
  $('routePreview').hidden=false;
 });
-$('approveLiveScopes').onclick=()=>action(async()=>{
- const agreed=confirm('确认以 Magpie 当前的生产 Gateway Key 白名单为准？只接受已登录且未隔离的 Codex 账号新增；不得新增被隔离账号。此操作不会写入生产 Key 文件，只会更新 Codex Guard 内部基线及审计记录。以后新增账号若触发隔离，插件将按新基线自动移除其生产路由。');
- if(!agreed)return;
- const result=await api('/api/routing/adopt-current','POST',{confirm:'APPROVE_CURRENT_PRODUCTION_SCOPES'});
- notice('当前生产白名单已核对并采用，未修改 Gateway Key 文件，隔离记录保持不变。');
+$('syncRoute').onclick=()=>action(async()=>{
+ await api('/api/routing/apply','POST',{});
+ notice('已按当前检测状态同步生产路由，其他 Provider 配置保持不变。');
 });
 $('resetAllAccountStates').onclick=async()=>{
  const button=$('resetAllAccountStates');
  if(button.disabled)return;
- if(!confirm('此重置优先于所有正在执行的检测：立即取消旧检测并废弃未完成结果；清空所有账号的隔离和检测状态，恢复 Guard 管理的生产 Gateway Key 原始权限，并暂停自动检测与自动隔离。账号设置和检测历史保留。是否继续？'))return;
- const phrase=prompt('此操作影响全部监测账号及生产 Key。确认请输入 RESET_ALL_ACCOUNT_STATES');
- if(phrase!=='RESET_ALL_ACCOUNT_STATES')return;
+ if(!confirm('立即取消正在运行的检测，清空当前检测状态和隔离记录？检测历史、题库、配置和生产 Key 当前权限均保留，后续按新的有效检测结果同步。'))return;
  button.disabled=true;
  try{
-  await api('/api/accounts/reset-all','POST',{confirm:phrase});
+  await api('/api/accounts/reset-all','POST',{});
   await refresh();
-  notice('全部账号状态已重置，Guard 管理的生产路由已恢复；定时检测及自动隔离已暂停。历史记录和配置未删除。');
+  notice('检测及隔离状态已重置，账号回到待检测；生产权限未修改，历史和配置保留。');
  }catch(e){
-  notice('重置失败，未确认恢复全部路由：'+(e?.message||String(e)),true);
+  notice('重置失败：'+(e?.message||String(e)),true);
  }finally{button.disabled=false}
 };
-$('restoreRoute').onclick=()=>action(async()=>{
- const value=prompt('紧急恢复将重置全部账号隔离与检测状态、恢复路由并停止定时检测。请输入 RESTORE_ALL_PRODUCTION_KEYS');
- if(value!=='RESTORE_ALL_PRODUCTION_KEYS')return;
- await api('/api/routing/restore','POST',{confirm:value});
-});
 $('historyAccount').onchange=renderHistory;
 (async()=>{
  try{await refresh();await loadModels();await loadFingerprintModels()}catch(e){notice('控制台加载失败：'+e.message,true)}

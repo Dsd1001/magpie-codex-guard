@@ -39,8 +39,8 @@ func emergencyFixture(t *testing.T) (*Service, string) {
 	}
 	s.state.Config = Config{GatewayURL: "http://127.0.0.1:3333", GatewayKey: "PROBE_SECRET_LONG_ENOUGH", DailyLimit: 100}
 	s.state.Route = RoutingState{ProbeKeyID: "probe", AutoApply: true, ExpectedCodexCount: 2}
-	s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")] = &AccountTarget{Account: "aaa", Model: "codex/gpt-6.1-sol", Enabled: true}
-	s.state.AccountTargets[accountTargetID("bbb", "codex/gpt-6.1-sol")] = &AccountTarget{Account: "bbb", Model: "codex/gpt-6.1-sol", Enabled: true}
+	s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")] = &AccountTarget{Account: "aaa", Model: "codex/gpt-6.1-sol", Enabled: true, State: PhaseHealthy, RouteEligible: true}
+	s.state.AccountTargets[accountTargetID("bbb", "codex/gpt-6.1-sol")] = &AccountTarget{Account: "bbb", Model: "codex/gpt-6.1-sol", Enabled: true, State: PhaseHealthy, RouteEligible: true}
 	if err := s.saveLocked(); err != nil {
 		t.Fatal(err)
 	}
@@ -80,17 +80,14 @@ func TestFailClosedDisablesKeysWhenNoHealthyCodex(t *testing.T) {
 	if !reflect.DeepEqual(keys["production"].Accounts, []string{"codex/bbb"}) {
 		t.Fatalf("scope: %v", keys["production"].Accounts)
 	}
-	if !keys["restricted"].Off {
-		t.Fatal("restricted key with no healthy Codex must be disabled")
+	if keys["restricted"].Off || !reflect.DeepEqual(keys["restricted"].Accounts, []string{"codex/bbb"}) {
+		t.Fatal("managed key failed to select all healthy Codex accounts")
 	}
 	if keys["probe"].Off {
 		t.Fatal("probe key was disabled")
 	}
 	if !keys["alreadyoff"].Off {
 		t.Fatal("existing disabled key was enabled")
-	}
-	if keys["restricted"].Accounts[0] != "codex/aaa" {
-		t.Fatal("do not erase original scope on disabled key")
 	}
 
 	// Now everyone is isolated. Every production Key must become OFF even
@@ -129,8 +126,8 @@ func TestFailClosedDisablesKeysWhenNoHealthyCodex(t *testing.T) {
 	if !reflect.DeepEqual(keys["production"].Accounts, []string{"codex/bbb"}) {
 		t.Fatalf("unhealthy account got routed %v", keys["production"].Accounts)
 	}
-	if !keys["restricted"].Off {
-		t.Fatal("scoped key should remain disabled, only aaa eligible originally")
+	if keys["restricted"].Off || !reflect.DeepEqual(keys["restricted"].Accounts, []string{"codex/bbb"}) {
+		t.Fatal("recovery used a historical whitelist instead of healthy state")
 	}
 	if !keys["alreadyoff"].Off {
 		t.Fatal("originally disabled key got incorrectly enabled")
@@ -141,10 +138,10 @@ func TestFailClosedDisablesKeysWhenNoHealthyCodex(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys = decodeKeyStates(t, path)
-	if keys["production"].Off || len(keys["production"].Accounts) > 0 {
+	if keys["production"].Off || !reflect.DeepEqual(keys["production"].Accounts, []string{"codex/aaa", "codex/bbb"}) {
 		t.Fatal("production baseline not restored")
 	}
-	if keys["restricted"].Off || !reflect.DeepEqual(keys["restricted"].Accounts, []string{"codex/aaa"}) {
+	if keys["restricted"].Off || !reflect.DeepEqual(keys["restricted"].Accounts, []string{"codex/aaa", "codex/bbb"}) {
 		t.Fatal("restricted baseline not restored")
 	}
 	if !keys["alreadyoff"].Off {
@@ -154,7 +151,7 @@ func TestFailClosedDisablesKeysWhenNoHealthyCodex(t *testing.T) {
 		t.Fatal("probe key changed")
 	}
 }
-func TestExternalOffEditRefusesOverwrite(t *testing.T) {
+func TestExternalOffEditIsPreservedWithoutStoppingSync(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	s.state.Holds["aaa"] = QuarantineHold{Account: "aaa", Risk: "low"}
@@ -182,12 +179,15 @@ func TestExternalOffEditRefusesOverwrite(t *testing.T) {
 	if err := os.WriteFile(path, edited, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ApplyRouting(context.Background(), false); err == nil {
-		t.Fatal("externally edited status MUST conflict")
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if !decodeKeyStates(t, path)["production"].Off {
+		t.Fatal("administrator-disabled key was enabled")
 	}
 
 }
-func TestManualRestoreClearsEmergencyDisabledKeys(t *testing.T) {
+func TestResetDoesNotClearEmergencyRouteRestrictions(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	s.state.Holds["aaa"] = QuarantineHold{Account: "aaa", Risk: "low"}
@@ -199,14 +199,14 @@ func TestManualRestoreClearsEmergencyDisabledKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := decodeKeyStates(t, path)
-	if keys["production"].Off || keys["restricted"].Off {
-		t.Fatal("restore failed to turn production keys back on")
+	if !keys["production"].Off || !keys["restricted"].Off {
+		t.Fatal("reset unexpectedly enabled production keys")
 	}
 	if !keys["alreadyoff"].Off {
 		t.Fatal("restore illegally enabled a previously disabled key")
 	}
-	if len(s.state.Holds) != 0 || s.state.Route.AutoApply {
-		t.Fatalf("restore did not disable controller: %d holds", len(s.state.Holds))
+	if len(s.state.Holds) != 0 || !s.state.Route.AutoApply || !s.state.Route.AwaitingDetection {
+		t.Fatalf("reset did not preserve controller settings: %d holds", len(s.state.Holds))
 	}
 }
 

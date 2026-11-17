@@ -13,11 +13,10 @@ import (
 	"github.com/Dsd1001/magpie-codex-guard/internal/fingerprint"
 )
 
-func TestResetAllStatesRestoresRoutingAndKeepsHistory(t *testing.T) {
+func TestResetAllStatesPreservesRoutingSettingsAndHistory(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	s.state.Route.ScheduleEnabled = true
-	beforeKeys := decodeKeyStates(t, path)
 	for _, target := range s.state.AccountTargets {
 		target.State = PhaseIsolated
 		target.Reason = "旧错误"
@@ -42,25 +41,26 @@ func TestResetAllStatesRestoresRoutingAndKeepsHistory(t *testing.T) {
 	if !decodeKeyStates(t, path)["production"].Off {
 		t.Fatal("setup did not disable the production key")
 	}
+	beforeKeys := decodeKeyStates(t, path)
 	plan, err := s.ApplyRouting(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Mode != "observe_only" || len(plan.Quarantined) != 0 {
+	if plan.Mode != "awaiting_detection" || len(plan.Quarantined) != 0 {
 		t.Fatalf("reset preview should have no holds: %+v", plan)
 	}
 	gotKeys := decodeKeyStates(t, path)
 	if !reflect.DeepEqual(gotKeys, beforeKeys) {
-		t.Fatalf("reset did not restore original gateway key configuration: got %+v want %+v", gotKeys, beforeKeys)
+		t.Fatalf("reset changed current gateway key configuration: got %+v want %+v", gotKeys, beforeKeys)
 	}
 	if len(s.state.Holds) != 0 || len(s.state.Route.Quarantined) != 0 {
 		t.Fatal("reset left quarantine records")
 	}
-	if s.state.Route.AutoApply || s.state.Route.ScheduleEnabled {
-		t.Fatal("reset must pause both production routing and the scheduler")
+	if !s.state.Route.AutoApply || !s.state.Route.ScheduleEnabled || !s.state.Route.AwaitingDetection {
+		t.Fatal("reset changed controller settings or failed to defer routing until new evidence")
 	}
-	if hasManagedRoutes(s.state.Route) {
-		t.Fatal("reset left managed routing baselines")
+	if !hasManagedRoutes(s.state.Route) {
+		t.Fatal("reset lost temporary restriction ownership needed for later recovery")
 	}
 	if len(s.state.AccountResults) != 1 || s.state.AccountResults[0].ID != "history" {
 		t.Fatal("reset erased historical detections")
@@ -78,14 +78,14 @@ func TestResetAllStatesRestoresRoutingAndKeepsHistory(t *testing.T) {
 			t.Fatalf("reset changed monitoring configuration: %+v", target)
 		}
 	}
-	if got := s.state.Route.Audit[len(s.state.Route.Audit)-1].Action; got != "reset" {
+	if got := s.state.Route.Audit[len(s.state.Route.Audit)-1].Action; got != "reset-monitoring" {
 		t.Fatalf("reset audit record missing: %s", got)
 	}
 	var persisted State
 	if err := s.store.Load(&persisted); err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Route.ScheduleEnabled || len(persisted.Holds) != 0 {
+	if !persisted.Route.ScheduleEnabled || !persisted.Route.AwaitingDetection || len(persisted.Holds) != 0 {
 		t.Fatal("reset state not persisted in SQLite")
 	}
 }
@@ -103,32 +103,36 @@ func TestResetWithoutManagedRoutesWorksWithoutGatewayKeys(t *testing.T) {
 	if _, err := s.ApplyRouting(context.Background(), true); err != nil {
 		t.Fatalf("observation-only reset should not require a gateway key: %v", err)
 	}
-	if len(s.state.Holds) != 0 || s.state.Route.ScheduleEnabled ||
+	if len(s.state.Holds) != 0 || !s.state.Route.ScheduleEnabled ||
 		s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")].ConsecutiveFails != 0 {
 		t.Fatal("observation-only state was not reset")
 	}
 }
 
-func TestResetRestoresWhenProbeKeyMissingAndAccountCountChanged(t *testing.T) {
+func TestResetDoesNotNeedProbeKeyOrHistoricalAccountCount(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	s.state.Holds["aaa"] = QuarantineHold{Account: "aaa", Risk: "isolated"}
 	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
+	before := decodeKeyStates(t, path)
 	s.state.Route.ProbeKeyID = "deleted-probe-key"
 	s.state.Route.ExpectedCodexCount = 99
 	s.state.Config.GatewayKey = ""
 	if _, err := s.ApplyRouting(context.Background(), true); err != nil {
-		t.Fatalf("reset should restore verified baselines even without the probe key: %v", err)
+		t.Fatalf("reset should not consult the probe key: %v", err)
 	}
 	keys := decodeKeyStates(t, path)
-	if keys["production"].Off || len(keys["production"].Accounts) != 0 || keys["restricted"].Off {
-		t.Fatalf("managed routes were not restored: %+v", keys)
+	if !reflect.DeepEqual(keys, before) {
+		t.Fatal("reset modified production permissions")
+	}
+	if len(s.state.Holds) != 0 || !s.state.Route.AwaitingDetection {
+		t.Fatal("reset state was not cleared")
 	}
 }
 
-func TestResetRejectsExternalKeyEditsWithoutClearingHolds(t *testing.T) {
+func TestResetIgnoresExternalWhitelistEditsAndClearsHolds(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	s.state.Route.ScheduleEnabled = true
@@ -156,11 +160,11 @@ func TestResetRejectsExternalKeyEditsWithoutClearingHolds(t *testing.T) {
 	if err := os.WriteFile(path, b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ApplyRouting(context.Background(), true); err == nil {
-		t.Fatal("reset must reject conflicting administrator edits")
+	if _, err := s.ApplyRouting(context.Background(), true); err != nil {
+		t.Fatal(err)
 	}
-	if len(s.state.Holds) == 0 || !s.state.Route.ScheduleEnabled {
-		t.Fatal("reset must not clear state when live route restoration is unsafe")
+	if len(s.state.Holds) != 0 || !s.state.Route.ScheduleEnabled {
+		t.Fatal("reset failed to clear only monitoring state")
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || string(after) != string(b) {
@@ -235,12 +239,11 @@ func TestResetCancelsRunningObjectiveAndDropsLateVerdict(t *testing.T) {
 	if target.State != "unverified" || target.ConsecutiveFails != 0 {
 		t.Fatalf("old objective check overwrote the reset state: %+v", target)
 	}
-	if s.state.Route.ScheduleEnabled || s.state.Route.AutoApply || decodeKeyStates(t, keyPath)["production"].Off {
-		t.Fatal("reset did not pause automation and restore production keys")
+	if !s.state.Route.ScheduleEnabled || !s.state.Route.AutoApply || !s.state.Route.AwaitingDetection || decodeKeyStates(t, keyPath)["production"].Off {
+		t.Fatal("reset changed automation settings or production key permissions")
 	}
-	if err := s.TriggerAccount("aaa", "codex/gpt-6.1-sol", "milk", false); err == nil {
-		t.Fatal("stale scheduler handoff must not start an automatic probe")
-	}
+	// A new scheduler round is allowed; only results from the old epoch
+	// are discarded. The blocking HTTP server above belongs to the old round.
 }
 
 type blockingResetRunner struct {

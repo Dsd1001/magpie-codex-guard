@@ -27,6 +27,9 @@ func fingerprintAsObjectiveVerdict(report FingerprintReport, expected string) st
 // Fingerprints participate only in the ordinary automatic question bank.
 // No separate risk-classification fingerprint is executed after three errors.
 func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
+	if modelProvider(model) != "codex" {
+		return errors.New("自动检测和隔离仅管理 Codex 账号")
+	}
 	if err := ValidateAccount(account); err != nil {
 		return err
 	}
@@ -52,9 +55,13 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 		s.mu.Unlock()
 		return errors.New("模型指纹未加入自动客观题题库")
 	}
-	if s.state.Config.GatewayURL == "" || s.state.Config.GatewayKey == "" {
+	cfg, configErr := s.resolveProbeConfigLocked(account, model)
+	if configErr != nil {
 		s.mu.Unlock()
-		return errors.New("专用检测 Gateway Key 未配置")
+		return configErr
+	}
+	if target.State == PhaseHealthy {
+		target.RouteEligible = true
 	}
 	expected, refErr := resolveFingerprintReference(model, target.FingerprintExpected)
 	runner := s.fingerprint
@@ -67,6 +74,7 @@ func (s *Service) TriggerAutomaticFingerprint(account, model string) error {
 		return err
 	}
 	probeCtx, epoch := s.beginAccountProbeLocked()
+	probeCtx = withProbeConfig(probeCtx, cfg)
 	s.mu.Unlock()
 	go s.runAutomaticFingerprint(probeCtx, epoch, account, model, expected, refErr, runner)
 	return nil
@@ -84,6 +92,7 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, epoch uint64, acc
 	immediate := ""
 	if refErr != nil {
 		report.Diagnostic = refErr.Error()
+		immediate = "connection_error"
 	} else {
 		report, batch, immediate = s.sampleFingerprint(ctx, epoch, account, model, expected, runner)
 	}
@@ -108,27 +117,13 @@ func (s *Service) runAutomaticFingerprint(ctx context.Context, epoch uint64, acc
 	s.addResult(result)
 	routeChanged := false
 	if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil {
-		var holdPtr *QuarantineHold
-		hold, held := s.state.Holds[account]
-		if held {
-			holdPtr = &hold
-		}
-		timing := s.timingForTargetLocked(t)
-		first, release := objectiveTransitionWithTiming(t, holdPtr, verdict, FingerprintPromptID, now, timing)
-		t.FingerprintVersion = report.Version
-		t.LastFingerprintAt = now
-		if first {
-			newHold := startHoldWithTiming(*t, now, timing)
-			if immediate != "" {
-				newHold.Cause = immediate
-			}
-			s.state.Holds[account] = newHold
-			routeChanged = true
-		} else if release {
-			delete(s.state.Holds, account)
-			routeChanged = true
-		} else if held {
-			s.state.Holds[account] = hold
+		routeChanged = s.applyDetectionVerdictLocked(t, verdict, FingerprintPromptID, now)
+		if verdict == "connection_error" {
+			t.Reason = report.Diagnostic
+			s.state.Route.LastError = report.Diagnostic
+		} else {
+			t.FingerprintVersion = report.Version
+			t.LastFingerprintAt = now
 		}
 	}
 	if err := s.saveLocked(); err != nil {

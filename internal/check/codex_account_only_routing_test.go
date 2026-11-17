@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -124,12 +123,12 @@ func TestCodexQuarantineOnlyChangesAccountPicksAndPreservesOtherProviders(t *tes
 		t.Fatal(err)
 	}
 	keys = decodeKeyStates(t, path)
-	if keys["production"].Off || len(keys["production"].Accounts) != 0 || !slices.Equal(keys["production"].Models, []string{"codex/*", "cybersol/*", "gemini/*"}) {
+	if keys["production"].Off || !slices.Equal(keys["production"].Accounts, []string{"codex/aaa", "codex/bbb"}) || !slices.Equal(keys["production"].Models, []string{"codex/*", "cybersol/*", "gemini/*"}) {
 		t.Fatalf("full recovery changed unrelated provider configuration: %+v", keys["production"])
 	}
 }
 
-func TestCodexModelFallbackRejectsExternalAccessWidening(t *testing.T) {
+func TestCodexModelFallbackCorrectsExternalAccessWideningWithoutApproval(t *testing.T) {
 	s, path := emergencyFixture(t)
 	defer s.Close()
 	dir := filepath.Dir(path)
@@ -148,8 +147,11 @@ func TestCodexModelFallbackRejectsExternalAccessWidening(t *testing.T) {
 	// Reintroducing codex/* is now an unsafe modification of Guard's active
 	// temporary Codex model block, not an independent provider edit.
 	setGatewayModelFixture(t, path, "production", []string{"codex/*", "cybersol/*"})
-	if _, err := s.ApplyRouting(context.Background(), false); err == nil || !strings.Contains(err.Error(), "model scope changed") {
-		t.Fatalf("model bypass was not detected: %v", err)
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeKeyStates(t, path)["production"]; got.Off || !slices.Equal(got.Models, []string{"cybersol/*"}) {
+		t.Fatal("Codex bypass was not corrected while preserving fallback")
 	}
 }
 

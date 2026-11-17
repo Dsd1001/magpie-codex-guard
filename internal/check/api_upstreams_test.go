@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 )
 
 func apiFixture(t *testing.T) (*Service, string, string) {
@@ -74,7 +73,7 @@ func TestAPIProbePinMatchesMagpieTraceNamespace(t *testing.T) {
 	}
 }
 
-func TestAPIOnlyDiscoveryModelsAndIsolation(t *testing.T) {
+func TestAPIOnlyDiscoveryCannotBeQuarantinedByLegacyHolds(t *testing.T) {
 	s, path, id := apiFixture(t)
 	defer s.Close()
 	dir := filepath.Dir(path)
@@ -83,251 +82,108 @@ func TestAPIOnlyDiscoveryModelsAndIsolation(t *testing.T) {
 	}
 	accounts, err := DiscoverCodexAccounts(dir)
 	if err != nil || len(accounts) != 1 || accounts[0].ID != id {
-		t.Fatalf("API-only discovery: %+v, %v", accounts, err)
+		t.Fatalf("API discovery: %v %v", accounts, err)
 	}
-	t.Setenv("PATH", t.TempDir()) // no Magpie CLI and no Codex login
+	t.Setenv("PATH", t.TempDir())
 	models, err := AvailableCodexModels(context.Background(), Config{})
 	if err != nil || len(models) != 1 || models[0].ID != "pipio/gpt-6.1-sol" {
-		t.Fatalf("API-only model catalog: %+v, %v", models, err)
+		t.Fatalf("API manual catalog: %v %v", models, err)
 	}
-	s.state.Route.ExpectedCodexCount = 0
+	setGatewayModelFixture(t, path, "production", []string{"pipio/gpt-6.1-sol"})
 	s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
+	before := decodeKeyStates(t, path)["production"]
 	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	if !s.VerifyLiveHold(id) {
-		t.Fatal("API-only isolation not verified")
+	after := decodeKeyStates(t, path)["production"]
+	if after.Off != before.Off || !slices.Equal(after.Models, before.Models) || !slices.Equal(after.Accounts, before.Accounts) {
+		t.Fatal("legacy API hold changed API-only key")
+	}
+	if s.VerifyLiveHold(id) {
+		t.Fatal("plugin claimed ownership of non-Codex isolation")
 	}
 }
 
-func TestAPIIsolationHonorsFiniteModelScopesAndDisabledKeys(t *testing.T) {
+func TestNonCodexKeysAndDisabledKeysNeverChange(t *testing.T) {
 	s, path, id := apiFixture(t)
 	defer s.Close()
-	var rows []map[string]any
-	b, err := os.ReadFile(path)
-	if err != nil {
+	setGatewayModelFixture(t, path, "production", []string{"pipio/gpt-6.1-sol"})
+	setGatewayModelFixture(t, path, "alreadyoff", []string{"group/all"})
+	s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
+	s.state.Holds["aaa"] = QuarantineHold{Account: "aaa", Model: "codex/gpt-6.1-sol"}
+	s.state.Holds["bbb"] = QuarantineHold{Account: "bbb", Model: "codex/gpt-6.1-sol"}
+	before := decodeKeyStates(t, path)
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(b, &rows); err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range rows {
-		if row["id"] == "production" {
-			row["models"] = []string{"pipio/gpt-6.1-sol"}
+	after := decodeKeyStates(t, path)
+	for _, key := range []string{"production", "alreadyoff", "probe"} {
+		if after[key].Off != before[key].Off || !slices.Equal(after[key].Models, before[key].Models) || !slices.Equal(after[key].Accounts, before[key].Accounts) {
+			t.Fatal("unmanaged key changed", key)
 		}
 	}
-	rows = append(rows, map[string]any{"id": "disabled", "secret": "disabled-test-key", "off": true, "models": []string{"group/all"}})
-	b, _ = json.Marshal(rows)
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		t.Fatal(err)
-	}
-	s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
-	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	keys := decodeKeyStates(t, path)
-	if !keys["production"].Off || !slices.Equal(keys["production"].Models, []string{"pipio/gpt-6.1-sol"}) {
-		t.Fatal("last permitted API model must disable the key, not create an unrestricted scope")
-	}
-	if !keys["disabled"].Off || !slices.Equal(keys["disabled"].Models, []string{"group/all"}) {
-		t.Fatal("administrator-disabled key was changed")
-	}
-	delete(s.state.Holds, id)
-	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	keys = decodeKeyStates(t, path)
-	if keys["production"].Off || !slices.Equal(keys["production"].Models, []string{"pipio/gpt-6.1-sol"}) || !keys["disabled"].Off {
-		t.Fatal("recovery failed to restore finite permission and enabled baselines")
-	}
 }
 
-func TestAPIUpstreamFingerprintIsolationRecoveryAndPersistence(t *testing.T) {
+func TestLegacyAPITargetSupportsManualDiagnosisButNoAutomaticIsolation(t *testing.T) {
 	s, path, id := apiFixture(t)
 	defer s.Close()
-	var calls int
+	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		var payload struct {
-			Model string `json:"model"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&payload)
-		pin := "pipio"
-		if payload.Model != "pipio/gpt-6.1-sol" || r.Header.Get("X-Magpie-Account") != pin {
-			t.Errorf("probe was not fixed to API upstream: %q %q", payload.Model, r.Header.Get("X-Magpie-Account"))
+		if r.Header.Get("X-Magpie-Account") != "pipio" || r.Header.Get("Authorization") != "Bearer PROBE_SECRET_LONG_ENOUGH" {
+			t.Error("incorrect manual probe pin or credential")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"123, 221, 9"},"finish_reason":"stop"}],"usage":{"total_tokens":10}}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"1,2,3"},"finish_reason":"stop"}],"usage":{"total_tokens":11}}`))
 	}))
 	defer server.Close()
 	s.state.Config.GatewayURL = server.URL
-	s.state.Config.DailyLimit = 100
-	if err := s.SetAccountTarget(id, "pipio/gpt-6.1-sol", true); err != nil {
-		t.Fatal(err)
+	model := "pipio/gpt-6.1-sol"
+	target := &AccountTarget{Account: id, Model: model, Enabled: true, State: "unverified", FingerprintExpected: "gpt-6-astra"}
+	s.state.AccountTargets[accountTargetID(id, model)] = target
+	s.fingerprint = &fakeFingerprint{verdict: "mismatch"}
+	if err := s.TriggerAccount(id, model, FingerprintPromptID, false); err == nil {
+		t.Fatal("non-Codex automatic isolation unexpectedly enabled")
 	}
-	if err := s.SetAccountTarget(id, "codex/gpt-6.1-sol", true); err == nil {
-		t.Fatal("API account accepted another provider's model")
+	if calls != 0 || target.State != "unverified" {
+		t.Fatal("rejected automatic probe changed state")
 	}
-	if err := s.configureTargetFingerprint(id, "pipio/gpt-6.1-sol", "gpt-6-astra"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ConfigureDetectionPrompts(nil, true, FingerprintObjective); err != nil {
-		t.Fatal(err)
-	}
-	fake := &fakeFingerprint{verdict: "mismatch"}
-	s.fingerprint = fake
-	if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
+	before, _ := os.ReadFile(path)
+	if err := s.TriggerAccount(id, model, FingerprintPromptID, true); err != nil {
 		t.Fatal(err)
 	}
 	s.wg.Wait()
-	if calls != 3 || s.state.Holds[id].Risk != "isolated" {
-		t.Fatalf("first complete fingerprint mismatch must quarantine after 3 samples: %d %+v", calls, s.state.Holds[id])
-	}
-	keys := decodeKeyStates(t, path)
-	if !slices.Equal(keys["production"].Models, []string{"codex/*", "cybersol/*"}) || keys["production"].Off {
-		t.Fatalf("wrong production model isolation: %+v", keys["production"])
-	}
-	if len(keys["probe"].Models) != 0 || keys["probe"].Off {
-		t.Fatal("probe lost isolated API recovery access")
-	}
-	if !s.VerifyLiveHold(id) {
-		t.Fatal("live API quarantine was not verified")
-	}
-	reopened, err := New(s.dir, s.gate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reopened.state.Holds[id].Risk != "isolated" {
-		t.Fatal("restart lost API hold")
-	}
-	reopened.Close()
-	fake.verdict = "match"
-	for i := 0; i < 2; i++ {
-		if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
-			t.Fatal(err)
-		}
-		s.wg.Wait()
-	}
-	if _, ok := s.state.Holds[id]; ok {
-		t.Fatal("two recovery passes did not release hold")
-	}
-	if len(decodeKeyStates(t, path)["production"].Models) != 0 {
-		t.Fatal("recovery did not restore original unrestricted model scope")
-	}
-	target := s.state.AccountTargets[accountTargetID(id, "pipio/gpt-6.1-sol")]
-	if target.NextCheckAt.Sub(target.CheckedAt) != 30*time.Minute {
-		t.Fatal("API normal interval differs from 30 minutes")
+	after, _ := os.ReadFile(path)
+	if calls != 3 || len(s.state.Holds) != 0 || target.State != "unverified" || string(before) != string(after) {
+		t.Fatal("manual diagnosis affected routing or isolation")
 	}
 }
 
-func TestAPIUnavailableAndScopeConflicts(t *testing.T) {
-	s, path, id := apiFixture(t)
+func TestTemporaryCodexRestrictionsPreserveAdministratorProviderEdits(t *testing.T) {
+	s, path, _ := apiFixture(t)
 	defer s.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 429) }))
-	defer server.Close()
-	s.state.Config.GatewayURL = server.URL
-	_ = s.SetAccountTarget(id, "pipio/gpt-6.1-sol", true)
-	_ = s.configureTargetFingerprint(id, "pipio/gpt-6.1-sol", "gpt-6-astra")
-	_ = s.ConfigureDetectionPrompts(nil, true, FingerprintObjective)
-	if err := s.TriggerAutomaticFingerprint(id, "pipio/gpt-6.1-sol"); err != nil {
-		t.Fatal(err)
+	setGatewayModelFixture(t, path, "production", []string{"codex/*", "pipio/*", "cybersol/*"})
+	for _, id := range []string{"aaa", "bbb"} {
+		s.state.Holds[id] = QuarantineHold{Account: id, Model: "codex/gpt-6.1-sol"}
 	}
-	s.wg.Wait()
-	if len(s.state.Holds) != 0 || s.state.AccountTargets[accountTargetID(id, "pipio/gpt-6.1-sol")].ConsecutiveFails != 0 {
-		t.Fatal("HTTP 429 must retry without isolation or recording an incorrect answer")
-	}
-	s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
 	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	var rows []map[string]any
-	b, _ := os.ReadFile(path)
-	_ = json.Unmarshal(b, &rows)
-	for _, r := range rows {
-		if r["id"] == "production" {
-			r["models"] = []string{"pipio/*"}
-		}
+	setGatewayModelFixture(t, path, "production", []string{"pipio/gpt-6.1-sol"})
+	s.state.Route.Pending = true // restart after an interrupted previous sync
+	if _, err := s.RecoverRoutingJournal(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	b, _ = json.Marshal(rows)
-	_ = os.WriteFile(path, b, 0600)
-	if _, err := s.ApplyRouting(context.Background(), false); err == nil {
-		t.Fatal("out-of-band model scope edit was overwritten")
+	got := decodeKeyStates(t, path)["production"]
+	if got.Off || !slices.Equal(got.Models, []string{"pipio/gpt-6.1-sol"}) {
+		t.Fatal("independent-provider edits lost during pending recovery")
 	}
-	if s.VerifyLiveHold(id) {
-		t.Fatal("API hold verified despite production access")
+	delete(s.state.Holds, "bbb")
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
 	}
-	if _, _, err := apiModelScope([]string{"group/all"}, map[string]bool{"pipio": true}, []string{"codex", "pipio"}); err == nil {
-		t.Fatal("ambiguous group permission accepted for API isolation")
-	}
-}
-
-func TestAPIModelScopeJournalRecovery(t *testing.T) {
-	for _, mode := range []string{"before", "after", "external"} {
-		t.Run(mode, func(t *testing.T) {
-			s, path, id := apiFixture(t)
-			defer s.Close()
-			_, before, err := loadKeyDocuments(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			s.state.Holds[id] = QuarantineHold{Account: id, Model: "pipio/gpt-6.1-sol", Risk: "high"}
-			if _, err := s.ApplyRouting(context.Background(), false); err != nil {
-				t.Fatal(err)
-			}
-			route := &s.state.Route
-			route.Pending = true
-			route.Previous = map[string][]string{}
-			route.PreviousOff = map[string]bool{}
-			route.ModelPrevious = map[string][]string{}
-			route.PendingQuarantine = []string{id}
-			for _, key := range before {
-				route.Previous[key.ID] = slices.Clone(key.Accounts)
-				route.PreviousOff[key.ID] = key.Off
-				route.ModelPrevious[key.ID] = slices.Clone(key.Models)
-			}
-			if mode != "after" {
-				var rows []map[string]any
-				b, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := json.Unmarshal(b, &rows); err != nil {
-					t.Fatal(err)
-				}
-				for _, row := range rows {
-					if mode == "before" {
-						row["models"] = route.ModelPrevious[row["id"].(string)]
-					}
-					if mode == "external" && row["id"] == "production" {
-						row["models"] = []string{"cybersol/gpt-6.1-sol"}
-					}
-				}
-				b, _ = json.Marshal(rows)
-				if err := os.WriteFile(path, b, 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			fileBefore, _ := os.ReadFile(path)
-			action, err := s.RecoverRoutingJournal(context.Background())
-			fileAfter, _ := os.ReadFile(path)
-			if string(fileBefore) != string(fileAfter) {
-				t.Fatal("journal recovery modified live permissions")
-			}
-			if mode == "external" {
-				if err == nil || !s.state.Route.Pending {
-					t.Fatal("external model-scope edit must leave recovery blocked")
-				}
-				return
-			}
-			if err != nil || s.state.Route.Pending {
-				t.Fatalf("journal recovery: %s %v", action, err)
-			}
-			if mode == "before" && (action != "aborted" || s.state.Route.AutoApply || len(s.state.Route.ModelExpected["production"]) != 0) {
-				t.Fatal("uncommitted model scope was accepted")
-			}
-			if mode == "after" && (action != "completed" || !s.VerifyLiveHold(id)) {
-				t.Fatal("committed model scope was not recovered")
-			}
-		})
+	got = decodeKeyStates(t, path)["production"]
+	if got.Off || !slices.Contains(got.Models, "codex/*") || !slices.Contains(got.Models, "pipio/gpt-6.1-sol") || slices.Contains(got.Models, "cybersol/*") {
+		t.Fatal("Codex recovery overwrote newer unrelated provider permissions", got.Models)
 	}
 }

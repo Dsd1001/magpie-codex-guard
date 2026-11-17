@@ -12,3 +12,6 @@
 *.pem
 *.key
 .DS_Store
+
+# Local validation logs and scratch data.
+/.work/

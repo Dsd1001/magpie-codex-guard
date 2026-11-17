@@ -133,45 +133,6 @@ func matchesAccountModel(a CodexAccount, model string) bool {
 	return accountProvider(a) == modelProvider(model)
 }
 
-func heldAPIProviders(state State) map[string]bool {
-	out := map[string]bool{}
-	for _, hold := range state.Holds {
-		if p := modelProvider(hold.Model); p != "" && p != "codex" {
-			out[p] = true
-		}
-	}
-	return out
-}
-
-// Explicit provider patterns avoid group aliases or provider wildcards that
-// could admit an excluded upstream through another name. Unsupported scopes
-// are rejected rather than widened or silently treated as isolated.
-func apiModelScope(baseline []string, held map[string]bool, providers []string) ([]string, bool, error) {
-	if len(held) == 0 {
-		return slices.Clone(baseline), false, nil
-	}
-	patterns := slices.Clone(baseline)
-	if len(patterns) == 0 {
-		for _, p := range providers {
-			patterns = append(patterns, p+"/*")
-		}
-	}
-	out := []string{}
-	for _, pattern := range patterns {
-		p, m, ok := strings.Cut(pattern, "/")
-		if !ok || !providerIDPattern.MatchString(p) || p == "group" || m == "" || strings.ContainsAny(m, "/\\") {
-			return nil, false, errors.New("API isolation requires explicit provider model scopes; routing-group scopes require review")
-		}
-		if !held[p] {
-			out = append(out, pattern)
-		}
-	}
-	if len(out) == 0 {
-		return slices.Clone(baseline), true, nil
-	} // empty means allow-all: turn this key off instead
-	return out, false, nil
-}
-
 func apiProviderNames(dir string) ([]string, error) {
 	d, err := readProviderDocument(dir)
 	if err != nil {
@@ -248,68 +209,99 @@ func nonCodexModelScopes(models, providers []string) ([]string, bool) {
 	return out, len(out) > 0
 }
 
-func attachAPIModelScopes(state State, keys []privateGatewayKey, plan []PlannedKeyScope) error {
-	held := heldAPIProviders(state)
-	var providers []string
-	if len(held) > 0 {
-		dir, err := MagpieDir()
-		if err != nil {
-			return err
-		}
-		providers, err = apiProviderNames(dir)
-		if err != nil {
-			return err
+// administratorKeyOff distinguishes an unchanged Guard-owned emergency OFF
+// from an administrator disabling an otherwise enabled key.
+func administratorKeyOff(route RoutingState, key privateGatewayKey) bool {
+	baseline, known := route.BaselineOff[key.ID]
+	expected, tracked := route.ExpectedOff[key.ID]
+	if known && tracked && !baseline && expected && key.Off == expected {
+		return false
+	}
+	return key.Off
+}
+
+func codexModelPattern(scope string) bool {
+	provider, _, ok := strings.Cut(scope, "/")
+	return ok && provider == "codex"
+}
+
+// Only restore Codex scopes removed by Guard. Later administrator edits to
+// non-Codex scopes (including removals) must never be replaced by an old list.
+func modelBaselineForKey(route RoutingState, key privateGatewayKey) []string {
+	base, known := route.ModelBaselines[key.ID]
+	expected, tracked := route.ModelExpected[key.ID]
+	if !known || !tracked || slices.Equal(base, expected) {
+		return slices.Clone(key.Models)
+	}
+	if slices.Equal(key.Models, expected) {
+		return slices.Clone(base)
+	}
+	out := slices.Clone(key.Models)
+	// An empty live scope means the administrator explicitly allowed all.
+	if len(out) == 0 {
+		return out
+	}
+	for _, scope := range base {
+		if codexModelPattern(scope) && !slices.Contains(expected, scope) && !slices.Contains(out, scope) {
+			out = append(out, scope)
 		}
 	}
+	return out
+}
+
+func modelScopesMayUseCodex(models []string) bool {
+	if len(models) == 0 {
+		return true
+	}
+	for _, scope := range models {
+		provider, _, ok := strings.Cut(scope, "/")
+		// Aliases and provider globs cannot be proven non-Codex here. Keep
+		// their existing conservative all-isolated handling.
+		if !ok || provider == "group" || provider == "codex" || strings.ContainsAny(provider, "*?[") {
+			return true
+		}
+	}
+	return false
+}
+
+// Kept under the historical helper name, but now ONLY Codex is managed.
+// Legacy API-provider Holds cannot restrict other provider model permissions.
+func attachAPIModelScopes(state State, keys []privateGatewayKey, plan []PlannedKeyScope) error {
+	var providers []string
 	for i, k := range keys {
-		expected, expectedTracked := state.Route.ModelExpected[k.ID]
-		priorBaseline, baselineTracked := state.Route.ModelBaselines[k.ID]
-		// Only Guard-owned model restrictions require strict drift checks.
-		// With Codex account-only quarantine, administrators own all model
-		// scopes (including cybersol/*); adopt their live edits as-is.
-		owned := len(held) > 0 || (expectedTracked && baselineTracked && !slices.Equal(expected, priorBaseline))
-		baseline := slices.Clone(k.Models)
-		if owned {
-			if expectedTracked && !slices.Equal(expected, k.Models) {
-				return fmt.Errorf("Gateway Key %s model scope changed outside the controller", k.ID)
-			}
-			if baselineTracked {
-				baseline = slices.Clone(priorBaseline)
-			}
-		}
-		plan[i].ModelsBaseline = slices.Clone(baseline)
+		base := modelBaselineForKey(state.Route, k)
+		plan[i].ModelsBaseline = slices.Clone(base)
 		plan[i].ModelsBefore = slices.Clone(k.Models)
-		plan[i].ModelsAfter = slices.Clone(baseline)
-		baselineOff, tracked := state.Route.BaselineOff[k.ID]
-		if !tracked {
-			baselineOff = k.Off
-		}
-		if k.ID != state.Route.ProbeKeyID && !baselineOff {
-			after, apiBlocked, err := apiModelScope(baseline, held, providers)
-			if err != nil {
-				return err
+		plan[i].ModelsAfter = slices.Clone(k.Models)
+		adminOff := administratorKeyOff(state.Route, k)
+		if plan[i].IsProbe || adminOff || !modelScopesMayUseCodex(base) {
+			plan[i].After = slices.Clone(k.Accounts)
+			plan[i].OffAfter = k.Off
+			plan[i].CodexBlocked = false
+			if plan[i].IsProbe {
+				plan[i].ModelsBaseline = slices.Clone(k.Models)
 			}
-			plan[i].ModelsAfter = after
-			plan[i].OffAfter = plan[i].OffAfter || apiBlocked
-			// When every Codex account permitted by this Key is held,
-			// Magpie cannot express "no Codex accounts" with account picks:
-			// an empty list means allow-all. Block Codex model access only,
-			// keeping explicit unrelated providers enabled and untouched.
-			if plan[i].OffAfter && !apiBlocked && len(after) > 0 {
-				if providers == nil {
-					dir, err := MagpieDir()
-					if err == nil {
-						providers, err = apiProviderNames(dir)
-					}
-					if err != nil {
-						// Unknown provider aliases: preserve fail-closed OFF.
-						providers = []string{}
-					}
+			plan[i].Changed = false
+			continue
+		}
+		plan[i].ModelsAfter = slices.Clone(base)
+		if plan[i].CodexBlocked {
+			if providers == nil {
+				dir, err := MagpieDir()
+				if err == nil {
+					providers, err = apiProviderNames(dir)
 				}
-				if withoutCodex, safe := nonCodexModelScopes(after, providers); safe {
-					plan[i].ModelsAfter = withoutCodex
-					plan[i].OffAfter = false
+				if err != nil {
+					providers = []string{}
 				}
+			}
+			if withoutCodex, safe := nonCodexModelScopes(base, providers); safe {
+				plan[i].ModelsAfter = withoutCodex
+				plan[i].OffAfter = false
+			} else {
+				// Preserve the existing fail-closed fallback for aliases or
+				// scopes that cannot safely retain an independent provider.
+				plan[i].OffAfter = true
 			}
 		}
 		plan[i].Changed = !slices.Equal(k.Accounts, plan[i].After) || !slices.Equal(k.Models, plan[i].ModelsAfter) || k.Off != plan[i].OffAfter

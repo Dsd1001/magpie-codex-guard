@@ -63,13 +63,18 @@ func (s *Service) TriggerFingerprint(account, model string, manual bool) error {
 		s.mu.Unlock()
 		return errors.New("已有检测正在执行")
 	}
-	if s.state.Config.GatewayURL == "" || s.state.Config.GatewayKey == "" {
+	cfg, configErr := s.resolveProbeConfigLocked(account, model)
+	if configErr != nil {
 		s.mu.Unlock()
-		return errors.New("专用检测 Gateway Key 未配置")
+		return configErr
+	}
+	if target.State == PhaseHealthy {
+		target.RouteEligible = true
 	}
 	expected, refErr := resolveFingerprintReference(model, target.FingerprintExpected)
 	runner := s.fingerprint
 	probeCtx, epoch := s.beginAccountProbeLocked()
+	probeCtx = withProbeConfig(probeCtx, cfg)
 	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()

@@ -1,106 +1,46 @@
-# API upstream monitoring
+# API upstream compatibility
 
-The guard monitors explicitly enrolled Magpie API keys alongside Codex
-logins. Upstream credentials remain in Magpie's private `providers.json`; the
-guard console and SQLite state contain stable identities only.
+Starting with alpha.33, automatic detection, quarantine, recovery and production
+route synchronization manage **Codex accounts only**. Other providers remain
+under the administrator's control.
 
-## Enrollment
+Existing explicitly enrolled API upstreams can still be selected for manual
+objective or fingerprint diagnostics. These requests use the same dedicated
+probe Key selected in the Guard console. Results are historical diagnostics;
+they do not change production permissions or create automatic provider holds.
+Legacy API targets are skipped by the automatic scheduler. Legacy API hold
+records are not used to restrict any provider's models.
 
-1. Add the provider through Magpie's provider editor, with its Responses endpoint,
-   API key and model list.
-2. Create `api-upstreams.json` beside `providers.json`, owned by the Magpie user
-   with mode `0600`:
+## Existing enrollment
 
-   ```json
-   [{"provider":"example","key_id":"0123456789","name":"Example API"}]
-   ```
+Manual diagnostics can use the existing private `api-upstreams.json` file in
+Magpie's data directory:
 
-   `key_id` is the first ten hexadecimal characters of SHA-256 of the saved API
-   key. Never put the key itself in this file. Enrollment is explicit to avoid
-   spending probe quota on every configured provider.
-3. In the guard console, add the enrolled API account with its qualified model,
-   such as `example/gpt-6.1-sol`. If the model maps to the local fingerprint
-   library, automatic fingerprint scoring works without a separate saved
-   expected-model setting. Unknown aliases yield an unavailable automatic check, which triggers an
-   isolation until the reference mapping is corrected and recovery succeeds.
+```json
+[{"provider":"example","key_id":"0123456789","name":"Example API"}]
+```
 
-The stable monitoring ID incorporates the provider and key fingerprint. Probes
-resolve Magpie's native routing trace ID: `provider` for one active key, or
-`provider#key_id` for multiple active keys. The saved key must still be active;
-discovery fails rather than silently testing a replacement. A rotated key needs
-explicit enrollment and a new monitoring target.
+The key identifier is the first ten hexadecimal characters of the SHA-256 of
+the API key already stored in Magpie's provider configuration. Do not duplicate
+raw upstream credentials in this file. Qualified models such as
+`example/gpt-model` stay pinned to the enrolled upstream identity; they are not
+fallback candidates for a Codex detection request.
 
-## Default question selection
+## Full Codex quarantine
 
-On a brand-new Guard database the default automatic question is the three-sample
-model fingerprint objective. Existing installations retain their saved question
-selection. Schedules and production routing modifications remain opt-in.
-The bundled fingerprint bank is pinned to lm-detector's 2026-10-27 reference
-(64 models), including the newly enrolled `gpt-6.1-terra`. Providers/models
-not covered by the local reference bank must be mapped before enabling
-fingerprint-based production quarantine; otherwise the automatic check is
-unavailable and quarantines conservatively.
+Independent providers do not require enrollment to remain production fallback
+candidates. Guard reads actual providers and mixed routing groups dynamically.
+It removes only Codex account selections and, when necessary, temporarily
+restricts Codex model access or Codex group members using the existing safe
+fallback mechanism. Provider names, model names and group names are not fixed.
 
-## Isolation and recovery
+Other-provider account selections, administrator model permissions, disabled
+keys, group members, ordering, priorities and routing strategies are preserved.
+An administrator editing those fields does not require whitelist approval.
+On recovery, Guard removes only its own temporary restrictions. Where a key's
+ambiguous/unlimited model scope cannot safely retain independent traffic, the
+existing conservative key-disable fallback remains; quarantined Codex accounts
+must never be released through an empty account list.
 
-- Healthy targets default to one check every 30 minutes; intervals and
-  request timeouts can be customized globally or per API monitoring target.
-- One completed fingerprint question contains three samples. A reliable
-  mismatch immediately isolates the API provider; no additional fingerprint
-  review or high/low risk classification runs.
-- Other objective questions require three wrong answers to the same question
-  before isolation. Inconclusive results and transport failures, including
-  HTTP 429, immediately isolate as unavailable (without incrementing the
-  wrong-answer counter); use the configurable unavailable retry schedule.
-- Recovery uses the same question twice, with a customizable confirmation
-  interval. The first and subsequent quarantine retests have independently
-  configurable intervals (default 6 hours, then 24 hours).
-- API isolation removes the provider from production Gateway Key `models`
-  scopes. This currently isolates the **whole provider**, including its other
-  keys and models. Use separate provider entries for independent isolation.
-- The dedicated probe key retains access for recovery. Successful recovery
-  restores each production key's original model scope.
-- Empty model scopes mean unrestricted access in Magpie. If isolation would
-  leave no permitted model, the key is disabled instead.
-- Explicit provider scopes are required while API isolation is active. Group
-  aliases or wildcard provider prefixes cause a conflict instead of being
-  silently rewritten. External permission edits are detected and preserved.
-- Magpie requires access to every member of an unnamed routing group. Therefore
-  an automatic group containing an isolated API provider is unavailable while
-  that hold is active. Call a healthy qualified model, such as
-  `codex/gpt-6.1-sol` or `example/gpt-6.1-sol`, during isolation. The guard
-  does not alter Magpie's group authorization semantics.
-- Codex quarantine continues to use native account allowlists. API identities
-  do not change the expected Codex login count.
-- Ordinary Codex account quarantine never owns Gateway Key `models`. Changes
-  to unrelated provider scopes such as `cybersol/*` are retained and adopted
-  without interrupting Codex account isolation. Explicit API upstream holds
-  still control only their enrolled provider model access.
-- When no Codex login can safely route, a finite list of qualified provider
-  models lets the guard temporarily remove Codex model entries only, leaving
-  healthy unrelated provider permissions intact. This exceptional protection
-  is undone as soon as an eligible Codex account is available. Unrestricted
-  scopes or unknown/group aliases cannot prove safe isolation, so the key
-  remains disabled until recovery. A bare automatic model group may still
-  be rejected during the all-Codex-held period; use a qualified healthy model.
-
-Fingerprint scores are statistical comparisons with the selected reference;
-they do not prove the upstream model's identity. For example, the reference
-category displayed as `gpt-6-astra/6.1-sol` has the internal ID `gpt-6-astra`.
-
-## Validation
-
-`go test ./... -count=1` covers fixed routing, provider/model binding, automatic
-question-specific failure thresholds, production isolation, custom
-timing policies, dedicated probe access, persistence,
-recovery, HTTP 429 handling and external scope conflicts. The routing identity
-tests cover single, multiple, disabled and duplicate saved keys.
-
-## Packaging
-
-Build and install a package containing the updated helper with
-`npm run build:release`. In alpha.27, source-only `github:` installations pin
-SHA-256-verified alpha.26 backend assets containing the 64-model 2026-10-27
-fingerprint library and updated sequence-shape scorer. The alpha.27 Release
-package bundles the current helper. Both installation forms preserve existing
-monitor settings and verify downloaded assets.
+See the [README](../README.md) for configuration, reset semantics and the
+unchanged Codex detection/recovery rules.

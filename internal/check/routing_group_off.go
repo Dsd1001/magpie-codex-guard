@@ -106,17 +106,15 @@ func codexGroupMembers(members []string) ([]string, bool) {
 }
 
 func allCodexHeld(codex []CodexAccount, excluded []string) bool {
-	var total int
 	for _, a := range codex {
 		if accountProvider(a) != "codex" {
 			continue
 		}
-		total++
 		if !slices.Contains(excluded, a.ID) {
 			return false
 		}
 	}
-	return total > 0
+	return true // no live Codex account is also unavailable for production
 }
 
 func withCodexOff(baseline, codex []string) []string {
@@ -131,7 +129,7 @@ func withCodexOff(baseline, codex []string) []string {
 
 // planRoutingGroupOff is deliberately strict: manual groups cannot honor
 // member Off, administrators' existing Off choices are kept, and external
-// edits to a Guard-owned group are rejected instead of overwritten.
+// edits to a Guard-owned group are rebased without changing its configuration.
 func planRoutingGroupOff(dir string, route RoutingState, codex []CodexAccount, excluded []string, restore bool) (groupOffPlan, error) {
 	var plan groupOffPlan
 	var err error
@@ -139,7 +137,7 @@ func planRoutingGroupOff(dir string, route RoutingState, codex []CodexAccount, e
 	if err != nil {
 		return plan, err
 	}
-	records, err := groupOffRecords(plan.groups)
+	_, err = groupOffRecords(plan.groups)
 	if err != nil {
 		return plan, err
 	}
@@ -148,21 +146,6 @@ func planRoutingGroupOff(dir string, route RoutingState, codex []CodexAccount, e
 	plan.baselines, plan.expected, plan.members = map[string][]string{}, map[string][]string{}, map[string][]string{}
 	all := !restore && allCodexHeld(codex, excluded)
 
-	// A previously owned group must still exist and have identical members.
-	for id, expected := range route.GroupOffExpected {
-		live, exists := records[id]
-		if !exists || !slices.Equal(live.Off, expected) || !slices.Equal(live.Members, route.GroupOffMembers[id]) {
-			return plan, fmt.Errorf("routing group %s changed outside Codex Guard; refusing to overwrite", id)
-		}
-		if _, ok := route.GroupOffBaselines[id]; !ok {
-			return plan, fmt.Errorf("routing group %s is missing its Off baseline", id)
-		}
-	}
-	for id := range route.GroupOffBaselines {
-		if _, ok := route.GroupOffExpected[id]; !ok {
-			return plan, fmt.Errorf("routing group %s is missing its tracked state", id)
-		}
-	}
 	for i, raw := range plan.groups {
 		var rec groupOffRecord
 		b, _ := json.Marshal(raw)
@@ -171,39 +154,51 @@ func planRoutingGroupOff(dir string, route RoutingState, codex []CodexAccount, e
 		}
 		base, tracked := route.GroupOffBaselines[rec.ID]
 		codexMembers, eligible := codexGroupMembers(rec.Members)
-		if !tracked && (!all || !eligible || !strings.HasPrefix(rec.ID, "auto-") || rec.Hidden || rec.Disabled) {
+		if !tracked && (!all || !eligible || rec.Hidden || rec.Disabled) {
 			continue
 		}
-		if rec.Routing == "manual" {
-			if tracked {
-				return plan, fmt.Errorf("managed routing group %s was switched to manual routing", rec.ID)
+		if rec.Routing == "manual" && !tracked {
+			continue // Key-level fail-closed protection still applies.
+		}
+		if tracked {
+			// Remove only our previous additions, retaining all administrator
+			// member/off/priority/strategy changes. No historical approval.
+			previousBase := base
+			base = slices.Clone(rec.Off)
+			for _, added := range route.GroupOffExpected[rec.ID] {
+				if strings.HasPrefix(added, "codex/") && !slices.Contains(previousBase, added) {
+					base = slices.DeleteFunc(base, func(value string) bool { return value == added })
+				}
 			}
-			// Manual routing ignores member Off. Do not modify this group;
-			// the restricted Gateway Key still denies all direct Codex calls.
-			continue
-		}
-		if !tracked {
+		} else {
 			base = slices.Clone(rec.Off)
 		}
 		desired := slices.Clone(base)
-		if all {
-			if !eligible {
-				return plan, fmt.Errorf("routing group %s no longer has a safe non-Codex fallback", rec.ID)
-			}
+		manage := all && eligible && rec.Routing != "manual" && !rec.Hidden && !rec.Disabled
+		if manage {
 			desired = withCodexOff(base, codexMembers)
-			if len(desired) >= len(rec.Members) {
-				if tracked {
-					return plan, fmt.Errorf("managed routing group %s has no live fallback", rec.ID)
+			fallback := false
+			for _, member := range rec.Members {
+				if !strings.HasPrefix(member, "codex/") && !slices.Contains(desired, member) {
+					fallback = true
 				}
-				// No eligible independent member: keep this group unchanged.
-				// The Key model scope remains the fail-closed boundary.
+			}
+			if !fallback && !tracked {
 				continue
 			}
+		}
+		// Account for set-equivalent administrator ordering without churning
+		// providers.json or rewriting an unrelated presentation preference.
+		left, right := slices.Clone(desired), slices.Clone(rec.Off)
+		slices.Sort(left)
+		slices.Sort(right)
+		if slices.Equal(left, right) {
+			desired = slices.Clone(rec.Off)
 		}
 		if slices.Equal(desired, rec.Off) && !tracked {
 			continue // already off by its owner; don't claim it
 		}
-		if all {
+		if manage {
 			plan.baselines[rec.ID] = slices.Clone(base)
 			plan.expected[rec.ID] = slices.Clone(desired)
 			plan.members[rec.ID] = slices.Clone(rec.Members)
@@ -272,75 +267,3 @@ func verifyGroupOffValues(dir string, expected map[string][]string) error {
 
 // groupOffJournalStatus compares all changed groups with the transaction's
 // before and after images. A mixed file is never silently restored.
-func groupOffJournalStatus(dir string, route RoutingState) (before, after bool, err error) {
-	before, after = true, true
-	if len(route.GroupOffPrevious) == 0 && len(route.GroupOffTarget) == 0 {
-		return true, true, nil
-	}
-	_, groups, err := readGroupOffDocument(dir)
-	if err != nil {
-		return false, false, err
-	}
-	records, err := groupOffRecords(groups)
-	if err != nil {
-		return false, false, err
-	}
-	for id, previous := range route.GroupOffPrevious {
-		live, ok := records[id]
-		if !ok || !slices.Equal(live.Members, route.GroupOffPendingMembers[id]) {
-			return false, false, fmt.Errorf("routing group %s changed during interrupted transaction", id)
-		}
-		if !slices.Equal(live.Off, previous) {
-			before = false
-		}
-		if !slices.Equal(live.Off, route.GroupOffTarget[id]) {
-			after = false
-		}
-	}
-	return before, after, nil
-}
-
-// completeGroupOffJournal is used only by the explicit recovery action,
-// under both routing locks. The Key file must already match its target.
-// It never expands any Gateway Key model or account permission.
-func completeGroupOffJournal(dir string, route RoutingState) error {
-	before, after, err := groupOffJournalStatus(dir, route)
-	if err != nil {
-		return err
-	}
-	if after {
-		return nil
-	}
-	if !before {
-		return errors.New("routing groups differ from both journal images")
-	}
-	raw, groups, hash, err := readGroupOffDocumentSnapshot(dir)
-	if err != nil {
-		return err
-	}
-	seen := map[string]bool{}
-	for _, group := range groups {
-		var id string
-		if err := json.Unmarshal(group["id"], &id); err != nil {
-			return err
-		}
-		desired, tracked := route.GroupOffTarget[id]
-		if !tracked {
-			continue
-		}
-		seen[id] = true
-		if len(desired) == 0 {
-			delete(group, "off")
-		} else {
-			b, err := json.Marshal(desired)
-			if err != nil {
-				return err
-			}
-			group["off"] = b
-		}
-	}
-	if len(seen) != len(route.GroupOffTarget) {
-		return errors.New("routing group disappeared during journal recovery")
-	}
-	return writeGroupOffDocument(dir, groupOffPlan{raw: raw, groups: groups, sourceHash: hash, target: route.GroupOffTarget, changed: true})
-}

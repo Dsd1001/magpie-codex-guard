@@ -113,6 +113,9 @@ func (s *Service) DiscoverAccountTargets(model string) (int, error) {
 	return len(created), nil
 }
 func (s *Service) TriggerAccount(account, model, prompt string, manual bool) error {
+	if !manual && modelProvider(model) != "codex" {
+		return errors.New("自动检测和隔离仅管理 Codex 账号")
+	}
 	if prompt == FingerprintPromptID {
 		if manual {
 			return s.TriggerFingerprint(account, model, true)
@@ -149,9 +152,13 @@ func (s *Service) TriggerAccount(account, model, prompt string, manual bool) err
 		s.mu.Unlock()
 		return errors.New("该题目未配置可靠的自动答案")
 	}
-	if s.state.Config.GatewayURL == "" || s.state.Config.GatewayKey == "" {
+	cfg, configErr := s.resolveProbeConfigLocked(account, model)
+	if configErr != nil {
 		s.mu.Unlock()
-		return errors.New("专用检测 Gateway Key 未配置")
+		return configErr
+	}
+	if target.State == PhaseHealthy {
+		target.RouteEligible = true
 	}
 	if !manual {
 		target.State = "checking"
@@ -162,6 +169,7 @@ func (s *Service) TriggerAccount(account, model, prompt string, manual bool) err
 		return err
 	}
 	probeCtx, epoch := s.beginAccountProbeLocked()
+	probeCtx = withProbeConfig(probeCtx, cfg)
 	s.mu.Unlock()
 	go s.runAccount(probeCtx, epoch, account, model, p, manual)
 	return nil
@@ -178,7 +186,7 @@ func (s *Service) runAccount(parent context.Context, epoch uint64, account, mode
 	if parent.Err() != nil {
 		return
 	}
-	cfg, err := s.reserveRequest()
+	cfg, err := s.reserveRequest(parent)
 	var answer string
 	var tokens int
 	if err == nil {
@@ -191,6 +199,8 @@ func (s *Service) runAccount(parent context.Context, epoch uint64, account, mode
 	verdict := "unavailable"
 	if err == nil {
 		verdict = gradeConfiguredPrompt(p, answer)
+	} else if isConnectionError(err) {
+		verdict = "connection_error"
 	} else if immediate := immediateGatewayVerdict(err); immediate != "" {
 		verdict = immediate
 	}
@@ -210,27 +220,11 @@ func (s *Service) runAccount(parent context.Context, epoch uint64, account, mode
 	s.addResult(r)
 	routeChanged := false
 	if !manual && p.Automatic {
-		id := accountTargetID(account, model)
-		if t := s.state.AccountTargets[id]; t != nil {
-			var holdPtr *QuarantineHold
-			hold, held := s.state.Holds[account]
-			if held {
-				holdPtr = &hold
-			}
-			timing := s.timingForTargetLocked(t)
-			first, release := objectiveTransitionWithTiming(t, holdPtr, verdict, p.ID, now, timing)
-			if first {
-				newHold := startHoldWithTiming(*t, now, timing)
-				if verdict == "http_401" || verdict == "http_404" {
-					newHold.Cause = verdict
-				}
-				s.state.Holds[account] = newHold
-				routeChanged = true
-			} else if release {
-				delete(s.state.Holds, account)
-				routeChanged = true
-			} else if held {
-				s.state.Holds[account] = hold
+		if t := s.state.AccountTargets[accountTargetID(account, model)]; t != nil {
+			routeChanged = s.applyDetectionVerdictLocked(t, verdict, p.ID, now)
+			if verdict == "connection_error" && err != nil {
+				t.Reason = err.Error()
+				s.state.Route.LastError = err.Error()
 			}
 		}
 	}
@@ -243,7 +237,7 @@ func (s *Service) runAccount(parent context.Context, epoch uint64, account, mode
 	s.mu.Unlock()
 	if routeChanged && active && parent.Err() == nil {
 		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
-		_, err := s.ApplyRouting(ctx, false)
+		_, err := s.applyAutomaticRouting(ctx)
 		cancel()
 		if err != nil && parent.Err() == nil {
 			s.noteSchedulerError(fmt.Errorf("账号隔离路由同步失败：%w", err))
@@ -268,7 +262,7 @@ func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, accoun
 		if parent.Err() != nil {
 			return FingerprintReport{Verdict: "indeterminate", Diagnostic: "检测被手动重置取消"}, batch, ""
 		}
-		cfg, err := s.reserveRequest()
+		cfg, err := s.reserveRequest(parent)
 		var answer string
 		var tokens int
 		if err == nil {
@@ -296,6 +290,9 @@ func (s *Service) sampleFingerprint(parent context.Context, epoch uint64, accoun
 		}
 		s.mu.Unlock()
 		if err != nil {
+			if isConnectionError(err) {
+				return FingerprintReport{Verdict: "indeterminate", UsedOutputs: len(outputs), Diagnostic: issue}, batch, "connection_error"
+			}
 			if immediate := immediateGatewayVerdict(err); immediate != "" {
 				// An explicit 401/404 is enough to quarantine now: no extra
 				// sampling or local classifier is needed.

@@ -91,14 +91,12 @@ func DiscoverCodexAccounts(dir string) ([]CodexAccount, error) {
 		ids[strings.ToLower(id)] = true
 		out = append(out, CodexAccount{ID: id, User: a.User})
 	}
-	apiAccounts, err := discoverAPIAccounts(dir)
-	if err != nil {
-		return nil, err
+	// Legacy API observations are optional and cannot break Codex discovery.
+	if apiAccounts, err := discoverAPIAccounts(dir); err == nil {
+		out = append(out, apiAccounts...)
 	}
-	out = append(out, apiAccounts...)
-	if len(out) == 0 {
-		return nil, errors.New("本机 Magpie 没有可识别的 Codex 账号或已登记 API 上游；拒绝推测可用账号")
-	}
+	// An empty live roster is valid: deleted accounts must leave routing.
+
 	slices.SortFunc(out, func(a, b CodexAccount) int {
 		return strings.Compare(strings.ToLower(a.User), strings.ToLower(b.User))
 	})

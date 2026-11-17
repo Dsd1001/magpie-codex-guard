@@ -14,10 +14,8 @@ func (s *Service) ScheduleOneAccount(now time.Time) error {
 	return s.scheduleOneAccount(now, true)
 }
 
-// Under an unresolved route conflict normal read-only checks can continue,
-// but a third failure must not create a NEW hold without the capability to
-// synchronize production keys. Already isolated accounts can still recover.
-func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
+// Detection is independent of production whitelist edits.
+func (s *Service) scheduleOneAccount(now time.Time, _ bool) error {
 	// Never repeatedly probe a deleted login. Its held account ID stays in
 	// SQLite (tombstone) and in the route exclusion set until explicitly
 	// retired; a future login with the same stable ID stays quarantined.
@@ -34,7 +32,7 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		live[a.ID] = true
 	}
 	s.mu.Lock()
-	if !s.state.Route.ScheduleEnabled || s.accountProbeActive || s.state.Route.Pending {
+	if !s.state.Route.ScheduleEnabled || s.accountProbeActive {
 		s.mu.Unlock()
 		return nil
 	}
@@ -52,21 +50,19 @@ func (s *Service) scheduleOneAccount(now time.Time, allowNewHolds bool) error {
 		return errors.New("没有可自动判分的客观题")
 	}
 	for _, t := range s.state.AccountTargets {
-		if t == nil || !t.Enabled || !live[t.Account] {
+		if t == nil || !t.Enabled || !live[t.Account] || modelProvider(t.Model) != "codex" {
 			continue
 		}
 		hold, held := s.state.Holds[t.Account]
-		if !allowNewHolds && !held {
-			// A reliable mismatch can create a hold, so no unheld target
-			// may run while routing cannot safely isolate.
-			continue
-		}
 		if held && hold.Model != t.Model {
 			continue
 		}
 		due := t.NextCheckAt
 		if held {
 			due = hold.NextCheckAt
+			if t.State == "connection_error" && t.NextCheckAt.After(due) {
+				due = t.NextCheckAt
+			}
 		}
 		if !due.IsZero() && now.Before(due) {
 			continue
@@ -152,37 +148,24 @@ func (s *Service) StartAccountScheduler() {
 	}()
 }
 func (s *Service) schedulerTick(now time.Time) {
-	s.mu.Lock()
-	syncAccounts := s.state.Route.AutoSyncAccounts
-	s.mu.Unlock()
-	if syncAccounts {
-		if _, err := s.SyncLiveAccountTargets(); err != nil &&
-			err.Error() != "检测运行中，稍后重试账号同步" {
-			s.noteSchedulerError(err)
-		}
+	if _, err := s.SyncLiveAccountTargets(); err != nil {
+		s.noteSchedulerError(err)
 	}
 	s.mu.Lock()
 	auto := s.state.Route.AutoApply
-	pending := s.state.Route.Pending
+	awaiting := s.state.Route.AwaitingDetection
 	s.mu.Unlock()
-	allowNewHolds := true
-	if auto && !pending {
+	if auto && !awaiting {
 		ctx, cancel := context.WithTimeout(s.ctx, 9*time.Second)
-		_, err := s.ApplyRouting(ctx, false)
+		_, err := s.applyAutomaticRouting(ctx)
 		cancel()
 		if err != nil {
 			s.noteSchedulerError(err)
-			// Never overwrite out-of-band edits. Only permit read-only
-			// checks when the LIVE gateway still excludes EVERY held account.
-			// Pending and unsafe quarantines remain blocked.
-			if checkErr := s.verifySafeReadOnlyProbes(); checkErr != nil {
-				s.noteSchedulerError(checkErr)
-				return
-			}
-			allowNewHolds = false
 		}
 	}
-	if err := s.scheduleOneAccount(now, allowNewHolds); err != nil {
+	// File contention or an administrator editing account picks must not
+	// prevent probes, isolation decisions, or recovery checks from running.
+	if err := s.scheduleOneAccount(now, true); err != nil {
 		s.noteSchedulerError(err)
 	}
 }

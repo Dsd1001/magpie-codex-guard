@@ -11,7 +11,7 @@ function fixture({modelsError='',apiUpstream=false,freshFingerprint=false}={}){
  const state={
   state:{
    config:{gateway_url:'http://127.0.0.1:3425',daily_limit:600},
-   route:{schedule_enabled:false,auto_apply:false,expected_codex_count:2,probe_key_id:'probe'},
+   route:{schedule_enabled:false,auto_apply:false,auto_sync_accounts:true,probe_key_id:'probe'},
    holds:{},
    account_targets:{},
    account_results:[],
@@ -78,9 +78,8 @@ function fixture({modelsError='',apiUpstream=false,freshFingerprint=false}={}){
    payload={mode:'active',keys:[],quarantined:[]};
   }
   else if(path==='/api/accounts/reset-all'&&method==='POST'){
-   assert.equal(JSON.parse(options.body).confirm,'RESET_ALL_ACCOUNT_STATES');
-   state.state.route.auto_apply=false;
-   state.state.route.schedule_enabled=false;
+   assert.deepEqual(JSON.parse(options.body),{});
+   state.state.route.awaiting_detection=true;
    state.state.holds={};
    for(const target of Object.values(state.state.account_targets)){
     target.state='unverified';
@@ -199,11 +198,13 @@ test('saving the connection reports catalog failure instead of a false success',
  try{
   await waitFor(()=>w.document.querySelector('#modelHelp').textContent.includes('HTTP 502'));
   w.document.querySelector('[data-tab="settings"]').click();
-  w.document.querySelector('#gatewayKey').value='test-hidden-probe-key';
+  assert.equal(w.document.querySelector('#gatewayKey'),null);
+  assert.equal(w.document.querySelector('#gatewayURL').value,'http://127.0.0.1:3425');
   w.document.querySelector('#saveConfig').click();
   await waitFor(()=>w.document.querySelector('#notice').textContent.includes('已保存，但模型加载失败'));
   assert.equal(w.document.querySelector('#notice').classList.contains('error'),true);
-  assert.equal(w.document.querySelector('#gatewayKey').value,'');
+  assert.equal(w.document.querySelector('#gatewayKey'),null);
+  assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/config').options.body),{gateway_url:'http://127.0.0.1:3425',daily_limit:600});
   assert.ok(calls.some(c=>c.path==='/api/config'&&c.options.method==='POST'));
   assert.doesNotMatch(w.document.querySelector('#notice').textContent,/操作已完成/);
  }finally{dom.window.close()}
@@ -307,26 +308,25 @@ test('deleted monitored login is archived, never probeable, and excluded from li
  }finally{dom.window.close()}
 });
 
-test('roster sync and explicitly approved production allowlist never send raw credentials',async()=>{
- const {dom,w,calls,state}=fixture();
+test('automatic discovery and independent routing sync need no approval fields or raw credentials',async()=>{
+ const {dom,w,calls}=fixture();
  try{
   await waitFor(()=>w.document.querySelector('#modelSelect option[value="codex/gpt-6.1-sol"]'));
+  for(const id of ['gatewayKey','expectedCount','routeConfirm','approveLiveScopes','autoSyncAccountRoster','saveAutoSyncAccountRoster','restoreRoute'])assert.equal(w.document.getElementById(id),null);
   w.document.querySelector('#syncAccountRoster').click();
-  await waitFor(()=>calls.some(c=>c.path==='/api/account-targets/sync'));
   await waitFor(()=>w.document.querySelector('#notice').textContent.includes('账号已同步'));
-  const auto=w.document.querySelector('#autoSyncAccountRoster');
-  auto.checked=true;
-  w.document.querySelector('#saveAutoSyncAccountRoster').click();
-  await waitFor(()=>state.state.route.auto_sync_accounts===true);
-  const req=calls.findLast(c=>c.path==='/api/account-targets/auto-sync');
-  assert.deepEqual(JSON.parse(req.options.body),{enabled:true,confirm:'AUTO_SYNC_CODEX_ACCOUNTS'});
-  assert.doesNotMatch(JSON.stringify(req.options.body),/Bearer |secret|token/i);
   w.document.querySelector('[data-tab="settings"]').click();
-  w.document.querySelector('#approveLiveScopes').click();
-  await waitFor(()=>calls.some(c=>c.path==='/api/routing/adopt-current'));
-  assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/routing/adopt-current').options.body),{confirm:'APPROVE_CURRENT_PRODUCTION_SCOPES'});
-  assert.equal(state.state.route.last_error,'');
-  assert.equal(w.document.querySelector('#restoreRoute').disabled,false);
+  w.document.querySelector('#enableSchedule').checked=true;
+  w.document.querySelector('#enableRouting').checked=true;
+  w.document.querySelector('#saveRoute').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/routing/config'));
+  const body=JSON.parse(calls.findLast(c=>c.path==='/api/routing/config').options.body);
+  assert.deepEqual(body,{probe_key_id:'probe',auto_apply:true,schedule_enabled:true});
+  assert.doesNotMatch(JSON.stringify(body),/Bearer |secret|gateway_key|confirm|expected_count/i);
+  await waitFor(()=>w.document.querySelector('#notice').textContent==='操作已完成');
+  w.document.querySelector('#syncRoute').click();
+  await waitFor(()=>calls.some(c=>c.path==='/api/routing/apply'));
+  assert.deepEqual(JSON.parse(calls.findLast(c=>c.path==='/api/routing/apply').options.body),{});
   await new Promise(resolve=>setTimeout(resolve,80));
  }finally{dom.window.close()}
 });
@@ -391,7 +391,7 @@ test('time policy edits persist global defaults and per-target overrides without
  }finally{dom.window.close()}
 });
 
-test('manual all-account reset requires explicit phrase and refreshes cleared states',async()=>{
+test('reset uses one confirmation and preserves controller settings while clearing detection states',async()=>{
  const {dom,w,calls,state}=fixture();
  try{
   await waitFor(()=>w.document.querySelector('#resetAllAccountStates'));
@@ -402,16 +402,17 @@ test('manual all-account reset requires explicit phrase and refreshes cleared st
    account:'aaa',model:'codex/gpt-6.1-sol',enabled:true,
    state:'quarantined',consecutive_fails:3,consecutive_unavailable:2
   };
-  w.prompt=()=> 'WRONG';
+  w.confirm=()=> false;
   w.document.querySelector('#resetAllAccountStates').click();
   assert.equal(calls.filter(c=>c.path==='/api/accounts/reset-all').length,0);
-  w.prompt=()=> 'RESET_ALL_ACCOUNT_STATES';
+  w.confirm=()=> true;
+  w.prompt=()=> {throw Error('reset must not request an approval phrase')};
   w.document.querySelector('#resetAllAccountStates').click();
   await waitFor(()=>calls.some(c=>c.path==='/api/accounts/reset-all'));
   await waitFor(()=>w.document.querySelector('#statIsolated').textContent==='0');
-  assert.equal(state.state.route.auto_apply,false);
-  assert.equal(state.state.route.schedule_enabled,false);
+  assert.equal(state.state.route.auto_apply,true);
+  assert.equal(state.state.route.schedule_enabled,true);
   assert.equal(state.state.account_targets['aaa\x1fcodex/gpt-6.1-sol'].state,'unverified');
-  assert.match(w.document.querySelector('#notice').textContent,/全部账号状态已重置/);
+  assert.match(w.document.querySelector('#notice').textContent,/检测及隔离状态已重置/);
  }finally{dom.window.close()}
 });

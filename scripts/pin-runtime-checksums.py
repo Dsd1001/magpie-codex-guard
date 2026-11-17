@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Pin immutable GitHub release checksums for github: source installations."""
+import json
 import pathlib
 import re
 import sys
@@ -11,7 +12,10 @@ for line in lines:
     checksums[pathlib.PurePath(filename.lstrip('*')).name] = digest
 runtime = pathlib.Path(__file__).resolve().parent.parent / 'plugin/runtime.mjs'
 s = runtime.read_text()
-version = re.search(r"const RELEASE_FILE = 'magpie-codex-guard-(.+?)\.tgz';", s).group(1)
+version = json.loads((runtime.parent.parent / 'package.json').read_text())['version']
+s = re.sub(r"const RELEASE = '[^']+';", f"const RELEASE = 'v{version}';", s)
+s = re.sub(r"const RELEASE_FILE = '[^']+';", f"const RELEASE_FILE = 'magpie-codex-guard-{version}.tgz';", s)
+s = re.sub(r"'User-Agent': 'magpie-codex-guard/[^']+'", f"'User-Agent': 'magpie-codex-guard/{version}'", s)
 replacements = {
     'ARCHIVE_SHA256': checksums['magpie-codex-guard-' + version + '.tgz'],
     'linux-amd64': checksums['codex-guard-linux-amd64'],

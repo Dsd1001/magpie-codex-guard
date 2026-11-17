@@ -21,7 +21,7 @@ func fingerprintBankFixture(t *testing.T) (*Service, *atomic.Int32, func()) {
 		"[{\"id\":\"aaa\",\"agent\":\"codex\",\"user\":\"a@example.com\"}]"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(magpie, "caller-keys.json"), []byte("[]"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(magpie, "caller-keys.json"), []byte(`[{"id":"probe","secret":"isolated-probe-key","models":["codex/*"]}]`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	count := &atomic.Int32{}
@@ -55,7 +55,8 @@ func fingerprintBankFixture(t *testing.T) (*Service, *atomic.Int32, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.state.Config = Config{GatewayURL: server.URL, GatewayKey: "isolated-probe-key", DailyLimit: 60}
+	s.state.Config = Config{GatewayURL: server.URL, DailyLimit: 60}
+	s.state.Route.ProbeKeyID = "probe"
 	s.state.AccountTargets[accountTargetID("aaa", "codex/gpt-6.1-sol")] = &AccountTarget{
 		Account: "aaa", Model: "codex/gpt-6.1-sol", Enabled: true, State: "passed",
 		ConsecutiveFails: 0, NextCheckAt: time.Now().Add(50 * time.Minute),

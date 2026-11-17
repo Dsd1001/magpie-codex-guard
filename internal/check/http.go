@@ -95,7 +95,8 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		state, health := s.Snapshot()
 		s.mu.Lock()
-		gatewayReady := s.state.Config.GatewayURL != "" && s.state.Config.GatewayKey != ""
+		_, probeErr := s.resolveProbeConfigLocked("", "")
+		gatewayReady := probeErr == nil
 		s.mu.Unlock()
 		dir, err := MagpieDir()
 		accounts := []CodexAccount{}
@@ -110,7 +111,12 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		if kerr != nil {
 			keys = []GatewayKeyLabel{}
 		}
-		writeJSON(w, map[string]any{"state": state, "health": health, "gateway_configured": gatewayReady, "accounts": accounts, "discovery_error": discoveryError, "keys": keys, "prompts": s.PromptCatalog(), "routing_error": func() string {
+		writeJSON(w, map[string]any{"state": state, "health": health, "gateway_configured": gatewayReady, "connection_error": func() string {
+			if probeErr != nil {
+				return probeErr.Error()
+			}
+			return ""
+		}(), "accounts": accounts, "discovery_error": discoveryError, "keys": keys, "prompts": s.PromptCatalog(), "routing_error": func() string {
 			if kerr != nil {
 				return kerr.Error()
 			}
@@ -119,7 +125,7 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 	})
 	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
-		cfg := s.state.Config
+		cfg, _ := s.resolveProbeConfigLocked("", "")
 		s.mu.Unlock()
 		models, err := AvailableCodexModels(r.Context(), cfg)
 		if err != nil {
@@ -346,30 +352,12 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		if !decode(w, r, &input) {
 			return
 		}
-		if input.Confirm != "APPLY_QUARANTINE" {
-			http.Error(w, "确认短语错误", 400)
-			return
-		}
 		plan, err := s.ApplyRouting(r.Context(), false)
 		if err != nil {
 			apiError(w, err, 409)
 			return
 		}
 		writeJSON(w, plan)
-	})
-	mux.HandleFunc("POST /api/routing/adopt-current", func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Confirm string `json:"confirm"`
-		}
-		if !decode(w, r, &input) {
-			return
-		}
-		preview, err := s.ApproveCurrentScopes(r.Context(), input.Confirm)
-		if err != nil {
-			apiError(w, err, 409)
-			return
-		}
-		writeJSON(w, preview)
 	})
 	mux.HandleFunc("POST /api/accounts/reset-all", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
@@ -378,11 +366,7 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 		if !decode(w, r, &input) {
 			return
 		}
-		if input.Confirm != "RESET_ALL_ACCOUNT_STATES" {
-			http.Error(w, "确认短语错误", http.StatusBadRequest)
-			return
-		}
-		plan, err := s.ApplyRouting(r.Context(), true)
+		plan, err := s.ResetAccountStates()
 		if err != nil {
 			apiError(w, err, http.StatusConflict)
 			return
@@ -398,7 +382,7 @@ func (s *Service) ManagementHandler(access *GuardAccess, consoles ...*Console) h
 			http.Error(w, "确认短语错误", 400)
 			return
 		}
-		plan, err := s.ApplyRouting(r.Context(), true)
+		plan, err := s.ResetAccountStates()
 		if err != nil {
 			apiError(w, err, 409)
 			return

@@ -154,16 +154,16 @@ func TestAutoRoutingGroupsFullQuarantineAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys = decodeKeyStates(t, keyPath)
-	if keys["production"].Off || !slices.Contains(keys["production"].Models, "codex/*") ||
-		len(s.state.Route.GroupOffExpected) > 0 || len(s.state.Holds) > 0 {
-		t.Fatal("manual reset did not restore baseline permissions")
+	if keys["production"].Off || slices.Contains(keys["production"].Models, "codex/*") ||
+		len(s.state.Route.GroupOffExpected) == 0 || len(s.state.Holds) > 0 {
+		t.Fatal("reset modified temporary routing permissions or lost ownership")
 	}
-	if got := testOffMap(t, path)["auto-gpt-6-sol"]; !slices.Equal(got, []string{"backup/gpt-6-sol"}) {
-		t.Fatalf("manual reset erased admin Off: %v", got)
+	if got := testOffMap(t, path)["auto-gpt-6-sol"]; !slices.Equal(got, []string{"backup/gpt-6-sol", "codex/gpt-6-sol"}) {
+		t.Fatal("reset changed routing group", got)
 	}
 }
 
-func TestAutoRoutingGroupsExternalDriftFailsClosed(t *testing.T) {
+func TestAutoRoutingGroupsKeepAdministratorOffEditsWithoutApproval(t *testing.T) {
 	s, keyPath := emergencyFixture(t)
 	defer s.Close()
 	path := testAutoGroups(t, keyPath)
@@ -175,8 +175,8 @@ func TestAutoRoutingGroupsExternalDriftFailsClosed(t *testing.T) {
 	}
 	editGroupOffFixture(t, path, "auto-gpt-6-1-sol", []string{"codex/gpt-6.1-sol", "cybersol/gpt-6.1-sol"})
 	before, _ := os.ReadFile(path)
-	if _, err := s.ApplyRouting(context.Background(), false); err == nil || !strings.Contains(err.Error(), "changed outside") {
-		t.Fatalf("external Off drift was not refused: %v", err)
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
@@ -228,7 +228,7 @@ func TestInterruptedGroupOffJournalCompletesAfterKeyRestriction(t *testing.T) {
 		t.Fatal(err)
 	}
 	action, err := s.RecoverRoutingJournal(context.Background())
-	if err != nil || action != "completed" {
+	if err != nil || action != "reconciled" {
 		t.Fatalf("journal recovery failed: %s %v", action, err)
 	}
 	if s.state.Route.Pending || !slices.Contains(testOffMap(t, path)["auto-gpt-6-1-sol"], "codex/gpt-6.1-sol") {
@@ -299,5 +299,40 @@ func TestManualGroupIsSkippedWithoutExposingIsolatedCodex(t *testing.T) {
 	}
 	if key := decodeKeyStates(t, keyPath)["production"]; key.Off || !slices.Equal(key.Models, []string{"cybersol/*"}) {
 		t.Fatalf("full isolation failed closed on manual group: %+v", key)
+	}
+}
+
+func TestArbitraryMixedProviderGroupAndEmptyRosterPreserveFallback(t *testing.T) {
+	s, keyPath := emergencyFixture(t)
+	defer s.Close()
+	dir := filepath.Dir(keyPath)
+	doc := `{"providers":[{"id":"provider-b"},{"id":"provider-c"}],"groups":[{"id":"custom-routing-name","name":"Arbitrary business model","members":["codex/model-x","provider-b/different-model","provider-c/another-model"],"off":["provider-c/another-model"],"routing":"order","rules":[{"test":"preserve"}]}]}`
+	path := filepath.Join(dir, "providers.json")
+	if err := os.WriteFile(path, []byte(doc), 0600); err != nil {
+		t.Fatal(err)
+	}
+	setGatewayModelFixture(t, keyPath, "production", []string{"codex/*", "provider-b/*", "provider-c/*"})
+	for _, id := range []string{"aaa", "bbb"} {
+		s.state.Holds[id] = QuarantineHold{Account: id, Model: "codex/gpt-6.1-sol"}
+	}
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	got := decodeKeyStates(t, keyPath)["production"]
+	if got.Off || !slices.Equal(got.Models, []string{"provider-b/*", "provider-c/*"}) {
+		t.Fatal("hard-coded provider/model fallback", got.Models)
+	}
+	if off := testOffMap(t, path)["custom-routing-name"]; !slices.Equal(off, []string{"provider-c/another-model", "codex/model-x"}) {
+		t.Fatal("arbitrary mixed group not isolated", off)
+	}
+	// All logins deleted: keep independent group members usable, not a stale Codex candidate.
+	if err := os.WriteFile(filepath.Join(dir, "logins.json"), []byte(`[]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyRouting(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(testOffMap(t, path)["custom-routing-name"], "codex/model-x") {
+		t.Fatal("deleting last login accidentally restored Codex group member")
 	}
 }

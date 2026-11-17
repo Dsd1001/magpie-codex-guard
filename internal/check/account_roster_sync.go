@@ -1,7 +1,6 @@
 package check
 
 import (
-	"errors"
 	"sort"
 )
 
@@ -15,22 +14,8 @@ type AccountRosterSync struct {
 	Restored  int `json:"restored"`
 }
 
-// ConfigureAccountAutoSync is opt-in because each newly discovered login can
-// consume quota. It never grants production routing permissions by itself.
-func (s *Service) ConfigureAccountAutoSync(enabled bool, confirm string) error {
-	if enabled && confirm != "AUTO_SYNC_CODEX_ACCOUNTS" {
-		return errors.New("启用新账号自动检测需要明确确认")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	previous := s.state.Route.AutoSyncAccounts
-	s.state.Route.AutoSyncAccounts = enabled
-	if err := s.saveLocked(); err != nil {
-		s.state.Route.AutoSyncAccounts = previous
-		return err
-	}
-	return nil
-}
+// Account discovery is automatic. Retain the old endpoint for older clients.
+func (s *Service) ConfigureAccountAutoSync(_ bool, _ string) error { return nil }
 
 // SyncLiveAccountTargets refreshes only monitoring targets. It does NOT edit
 // caller-keys.json, quarantine Holds, route baselines, or the expected count.
@@ -51,24 +36,18 @@ func (s *Service) SyncLiveAccountTargets() (AccountRosterSync, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.accountProbeActive {
-		return AccountRosterSync{}, errors.New("检测运行中，稍后重试账号同步")
-	}
 	models := map[string]bool{}
 	for _, t := range s.state.AccountTargets {
-		if t != nil && t.Enabled && validateAccountModel(t.Model) == nil {
+		if t != nil && t.Enabled && modelProvider(t.Model) == "codex" && validateAccountModel(t.Model) == nil {
 			models[t.Model] = true
 		}
-	}
-	if len(models) == 0 {
-		return AccountRosterSync{}, errors.New("先添加至少一个已启用的 Codex 监测模型")
 	}
 	modelIDs := make([]string, 0, len(models))
 	for m := range models {
 		modelIDs = append(modelIDs, m)
 	}
 	sort.Strings(modelIDs)
-	result := AccountRosterSync{LiveCount: len(accounts)}
+	result := AccountRosterSync{LiveCount: len(routingKnownIDs(accounts))}
 	old := make(map[string]*AccountTarget, len(s.state.AccountTargets))
 	for k, t := range s.state.AccountTargets {
 		if t == nil {
@@ -86,6 +65,9 @@ func (s *Service) SyncLiveAccountTargets() (AccountRosterSync, error) {
 		t.Missing = !present
 	}
 	for _, a := range accounts {
+		if accountProvider(a) != "codex" {
+			continue
+		}
 		for _, model := range modelIDs {
 			if !matchesAccountModel(a, model) {
 				continue

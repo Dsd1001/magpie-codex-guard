@@ -98,6 +98,7 @@ func TestObjectiveFingerprintIsolationAndRecoveryIntegration(t *testing.T) {
 	model := "codex/gpt-6.1-sol"
 	id := accountTargetID("aaa", model)
 	s.state.AccountTargets[id] = &AccountTarget{Account: "aaa", Model: model, Enabled: true, State: "unverified"}
+	s.state.AccountTargets[accountTargetID("bbb", model)] = &AccountTarget{Account: "bbb", Model: model, Enabled: true, State: PhaseHealthy, RouteEligible: true}
 	fake := &fakeFingerprint{verdict: "mismatch"}
 	s.fingerprint = fake
 	if err := s.saveLocked(); err != nil {
@@ -173,7 +174,7 @@ func TestObjectiveFingerprintIsolationAndRecoveryIntegration(t *testing.T) {
 	if _, exists := s.state.Holds["aaa"]; exists {
 		t.Fatal("two good objective answers did not release hold")
 	}
-	assertKeyScopes(nil)
+	assertKeyScopes([]string{"codex/aaa", "codex/bbb"})
 	if s.state.Route.Quarantined["aaa"] {
 		t.Fatal("production routing not restored")
 	}

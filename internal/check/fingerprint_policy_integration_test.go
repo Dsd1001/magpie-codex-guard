@@ -30,6 +30,11 @@ func TestIncompleteFingerprintThenDefinitiveResult(t *testing.T) {
 			var mode atomic.Int32
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/models" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":[{"id":"codex/gpt-6.1-sol"}]}`))
+					return
+				}
 				requests.Add(1)
 				if mode.Load() == 0 {
 					w.WriteHeader(http.StatusTooManyRequests)
@@ -96,6 +101,11 @@ func TestThreeIncompleteFingerprintRoundsIsolateWithCustomTiming(t *testing.T) {
 	defer s.Close()
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"codex/gpt-6.1-sol"}]}`))
+			return
+		}
 		requests.Add(1)
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
@@ -145,6 +155,11 @@ func TestGateway401And404ImmediateIsolationDuringFingerprintSample(t *testing.T)
 			defer s.Close()
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/models" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":[{"id":"codex/gpt-6.1-sol"}]}`))
+					return
+				}
 				n := int(calls.Add(1))
 				if n == tc.at {
 					w.WriteHeader(tc.status)
@@ -192,6 +207,11 @@ func TestOrdinaryObjective401And404AreImmediateBut429Retries(t *testing.T) {
 			s, _ := emergencyFixture(t)
 			defer s.Close()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/models" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":[{"id":"codex/gpt-6.1-sol"}]}`))
+					return
+				}
 				w.WriteHeader(status)
 			}))
 			defer server.Close()
@@ -266,6 +286,11 @@ func TestThirdFingerprintSample429RemainsUnavailable(t *testing.T) {
 	defer s.Close()
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"codex/gpt-6.1-sol"}]}`))
+			return
+		}
 		if requests.Add(1) == 3 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return

@@ -2,16 +2,15 @@ package check
 
 import (
 	"context"
-	"crypto/subtle"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -20,6 +19,7 @@ import (
 // RoutingState persists original permissions and a write-ahead journal. No
 // production route is ever modified without explicit opt-in.
 type RoutingState struct {
+	AwaitingDetection      bool                `json:"awaiting_detection,omitempty"`
 	ExpectedCodexCount     int                 `json:"expected_codex_count,omitempty"`
 	ProbeKeyID             string              `json:"probe_key_id,omitempty"`
 	ScheduleEnabled        bool                `json:"schedule_enabled"`
@@ -66,6 +66,7 @@ type RoutingPreview struct {
 	ProbeKeyID   string            `json:"probe_key_id,omitempty"`
 	AccountCount int               `json:"account_count"`
 	Quarantined  []string          `json:"quarantined"`
+	Excluded     []string          `json:"excluded"`
 	Keys         []PlannedKeyScope `json:"keys"`
 }
 
@@ -151,168 +152,68 @@ func routingKnownIDs(codex []CodexAccount) []string {
 	return ids
 }
 
-// routingExcluded holds quarantined accounts until ALL enabled model checks
-// for that account have passed twice. A single failed probe is NOT evidence
-// of degraded quality. Network/quota failures do not affect the counters.
-// routingExcluded is driven only by persisted account holds. A failed probe
-// that has not reached the fingerprint stage is never enough to isolate.
-// routingExcluded includes tombstones for removed Magpie logins. A high-risk
-// account must not vanish from quarantine merely because the login was
-// deleted. Only trusted persisted stable IDs (and a verified quarantine
-// journal/target) are treated as tombstones; unknown names fail closed.
+// routingExcluded is derived from current live Codex accounts, not historical
+// account allowlists. Pending accounts are excluded without being quarantined.
 func routingExcluded(state State, codex []CodexAccount) ([]string, error) {
-	excluded := map[string]bool{}
-	for ref, hold := range state.Holds {
-		stable, err := ResolveAccountID(codex, ref)
-		if err != nil {
-			validStable := len(ref) == 16
-			for _, ch := range ref {
-				if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
-					validStable = false
-					break
-				}
-			}
-			recorded := false
-			for _, t := range state.AccountTargets {
-				if t != nil && t.Account == ref && t.Model == hold.Model {
-					recorded = true
-					break
-				}
-			}
-			if !validStable || hold.Account != ref || (!state.Route.Quarantined[ref] && !recorded) {
-				return nil, fmt.Errorf("隔离账号身份无法解析，拒绝放行：%w", err)
-			}
-			stable = ref
+	var excluded []string
+	for _, a := range codex {
+		if accountProvider(a) == "codex" && !accountRouteEligible(state, a.ID) {
+			excluded = append(excluded, a.ID)
 		}
-		excluded[stable] = true
 	}
-	out := make([]string, 0, len(excluded))
-	for id := range excluded {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out, nil
+	sort.Strings(excluded)
+	return excluded, nil
 }
 
-// makeRoutingPreview checks for out-of-band edits before constructing any
-// changes. A new production key is enrolled automatically; an old key
-// changed by an administrator is NOT silently overwritten.
+func liveCodexHolds(state State, codex []CodexAccount) []string {
+	var held []string
+	for _, a := range codex {
+		if accountProvider(a) == "codex" {
+			if _, ok := state.Holds[a.ID]; ok {
+				held = append(held, a.ID)
+			}
+		}
+	}
+	sort.Strings(held)
+	return held
+}
+
+// A saved before/after image is only a transaction journal, never an approval
+// gate. The live non-Codex account picks and administrator OFF setting win.
 func makeRoutingPreview(state State, keys []privateGatewayKey, codex []CodexAccount) (RoutingPreview, map[string][]string, map[string]bool, error) {
-	route := state.Route
-	if route.Pending {
-		return RoutingPreview{}, nil, nil, errors.New("上次路由更新未完成；请人工核对 Gateway Key 配置")
-	}
-	if route.ProbeKeyID == "" {
-		return RoutingPreview{}, nil, nil, errors.New("未配置检测专用 Gateway Key ID")
-	}
-	if route.ExpectedCodexCount > 0 && len(routingKnownIDs(codex)) != route.ExpectedCodexCount {
-		return RoutingPreview{}, nil, nil, fmt.Errorf("Magpie 发现 %d 个 Codex 账号，与期望数量 %d 不一致；拒绝自动修改路由", len(routingKnownIDs(codex)), route.ExpectedCodexCount)
-	}
-	baselines := make(map[string][]string, len(keys))
-	offBaselines := make(map[string]bool, len(keys))
 	source := make([]GatewayKeyScope, 0, len(keys))
-	probeFound := false
+	baselines, offBaselines := map[string][]string{}, map[string]bool{}
 	for _, k := range keys {
-		if k.ID == "" {
-			return RoutingPreview{}, nil, nil, errors.New("Gateway Key 存在空 ID")
-		}
-		expected, known := route.Expected[k.ID]
-		if known && !slices.Equal(k.Accounts, expected) {
-			return RoutingPreview{}, nil, nil, fmt.Errorf("生产 Key %s 白名单被外部修改，已暂停自动路由；不会覆盖管理员设置", k.ID)
-		}
-		if expectedOff, expectedKnown := route.ExpectedOff[k.ID]; expectedKnown && k.Off != expectedOff {
-			return RoutingPreview{}, nil, nil, fmt.Errorf("生产 Key %s 的启用状态被外部修改，拒绝覆盖", k.ID)
-		}
-		if previousOff, previousKnown := route.BaselineOff[k.ID]; previousKnown {
-			offBaselines[k.ID] = previousOff
-		} else {
-			// A key enrolled for the first time saves its original enabled state.
-			offBaselines[k.ID] = k.Off
-		}
-		if baseline, known := route.Baselines[k.ID]; known {
-			baselines[k.ID] = slices.Clone(baseline)
-		} else {
-			if known {
-				return RoutingPreview{}, nil, nil, errors.New("持久化路由基线缺失，拒绝恢复")
-			}
-			baselines[k.ID] = slices.Clone(k.Accounts)
-		}
-		if k.ID == route.ProbeKeyID {
-			probeFound = true
-			if k.Off {
-				return RoutingPreview{}, nil, nil, errors.New("检测专用 Gateway Key 已被禁用")
-			}
-			// The probe key must be able to reach every account, including
-			// the quarantined ones, or recoveries could never be proved.
-			for _, ref := range k.Accounts {
-				if strings.HasPrefix(strings.ToLower(ref), "codex/") {
-					for _, a := range codex {
-						if accountProvider(a) != "codex" {
-							continue
-						}
-						if !slices.ContainsFunc(k.Accounts, func(x string) bool { return strings.EqualFold(x, "codex/"+a.ID) }) {
-							return RoutingPreview{}, nil, nil, errors.New("检测 Key 不能访问所有 Codex 账号")
-						}
-					}
-					break
-				}
-			}
-		}
-		source = append(source, GatewayKeyScope{ID: k.ID, Accounts: baselines[k.ID], Off: offBaselines[k.ID]})
-	}
-	if !probeFound {
-		return RoutingPreview{}, nil, nil, errors.New("配置的检测 Key 不存在")
+		off := administratorKeyOff(state.Route, k)
+		source = append(source, GatewayKeyScope{ID: k.ID, Accounts: slices.Clone(k.Accounts), Off: off})
+		baselines[k.ID] = slices.Clone(k.Accounts)
+		offBaselines[k.ID] = off
 	}
 	excluded, err := routingExcluded(state, codex)
 	if err != nil {
 		return RoutingPreview{}, nil, nil, err
 	}
-	// The planner also needs removed-but-held stable IDs in its known set,
-	// so it continues to filter them out of historical baseline scopes.
-	// AccountCount remains the true live Magpie login count.
-	planKnown := routingKnownIDs(codex)
-	apiIDs := map[string]bool{}
-	for _, a := range codex {
-		if accountProvider(a) != "codex" {
-			apiIDs[a.ID] = true
-		}
-	}
-	codexExcluded := []string{}
-	for _, id := range excluded {
-		if hold, ok := state.Holds[id]; ok && modelProvider(hold.Model) != "" && modelProvider(hold.Model) != "codex" {
-			apiIDs[id] = true
-		}
-		if apiIDs[id] {
-			continue
-		}
-		codexExcluded = append(codexExcluded, id)
-		if !slices.Contains(planKnown, id) {
-			planKnown = append(planKnown, id)
-		}
-	}
-	plan, err := PlanCodexQuarantine(source, route.ProbeKeyID, planKnown, codexExcluded)
+	plan, err := PlanCodexQuarantine(source, state.Route.ProbeKeyID, routingKnownIDs(codex), excluded)
 	if err != nil {
 		return RoutingPreview{}, nil, nil, err
-	}
-	// Changed means an update relative to the LIVE key store, not the
-	// original baseline. Recovery must restore keys modified earlier.
-	for i := range plan {
-		plan[i].Changed = !slices.Equal(keys[i].Accounts, plan[i].After) ||
-			keys[i].Off != plan[i].OffAfter
-		plan[i].OffBefore = keys[i].Off
 	}
 	if err := attachAPIModelScopes(state, keys, plan); err != nil {
 		return RoutingPreview{}, nil, nil, err
 	}
+	for i, k := range keys {
+		plan[i].Before = slices.Clone(k.Accounts)
+		plan[i].OffBefore = k.Off
+		plan[i].Changed = !slices.Equal(k.Accounts, plan[i].After) || !slices.Equal(k.Models, plan[i].ModelsAfter) || k.Off != plan[i].OffAfter
+	}
 	mode := "observe_only"
-	if route.AutoApply {
+	if state.Route.AutoApply {
 		mode = "active"
 	}
-	return RoutingPreview{Mode: mode, Pending: route.Pending, LastError: route.LastError, ProbeKeyID: route.ProbeKeyID, AccountCount: len(codex), Quarantined: excluded, Keys: plan}, baselines, offBaselines, nil
+	return RoutingPreview{Mode: mode, Pending: state.Route.Pending, LastError: state.Route.LastError,
+		ProbeKeyID: state.Route.ProbeKeyID, AccountCount: len(routingKnownIDs(codex)),
+		Quarantined: liveCodexHolds(state, codex), Excluded: excluded, Keys: plan}, baselines, offBaselines, nil
 }
 
-// readRouterInputs uses only local configuration. The login file carries
-// credentials, but discovery returns account IDs and names alone.
 func readRouterInputs(dir string) ([]CodexAccount, []map[string]json.RawMessage, []privateGatewayKey, error) {
 	accounts, err := DiscoverCodexAccounts(dir)
 	if err != nil {
@@ -323,16 +224,8 @@ func readRouterInputs(dir string) ([]CodexAccount, []map[string]json.RawMessage,
 }
 
 func verifyProbeKey(state State, keys []privateGatewayKey) error {
-	for _, k := range keys {
-		if k.ID != state.Route.ProbeKeyID {
-			continue
-		}
-		if len(state.Config.GatewayKey) < 16 || subtle.ConstantTimeCompare([]byte(k.Secret), []byte(state.Config.GatewayKey)) != 1 {
-			return errors.New("控制台 Gateway Key 不是独立检测 Key；拒绝自动改变生产路由")
-		}
-		return nil
-	}
-	return errors.New("检测 Key 不存在")
+	_, err := probeKeyByID(keys, state.Route.ProbeKeyID)
+	return err
 }
 
 func (s *Service) RoutingPreview() (RoutingPreview, error) {
@@ -346,325 +239,230 @@ func (s *Service) RoutingPreview() (RoutingPreview, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := verifyProbeKey(s.state, keys); err != nil {
-		return RoutingPreview{}, err
-	}
-	preview, _, _, err := makeRoutingPreview(s.state, keys, codex)
+	state := s.state
+	state.Route = routingStateAfterInterruptedWrite(state.Route)
+	preview, _, _, err := makeRoutingPreview(state, keys, codex)
 	return preview, err
 }
 
-func (s *Service) ConfigureRouting(probeKeyID string, active bool, confirm string) error {
-	if probeKeyID == "" || len(probeKeyID) > 120 || strings.ContainsAny(probeKeyID, "\r\n/") {
-		return errors.New("请输入有效的检测 Key ID")
-	}
-	if active && confirm != "ENABLE_ALL_PRODUCTION_KEYS" {
-		return errors.New("必须明确确认将管理全部生产 Gateway Key")
-	}
+// Compatibility entrypoint. The selected key may change between rounds.
+func (s *Service) ConfigureRouting(probeKeyID string, active bool, _ string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	route := &s.state.Route
-	if route.Pending {
-		return errors.New("未完成的路由更新需人工确认")
-	}
-	if route.ProbeKeyID != "" && route.ProbeKeyID != probeKeyID && len(route.Baselines) > 0 {
-		return errors.New("已有隔离管理历史，不允许直接更换检测 Key")
-	}
-	previous := *route
-	route.ProbeKeyID, route.AutoApply = probeKeyID, active
-	if err := s.store.Save(s.state); err != nil {
-		*route = previous
-		return err
-	}
-	return nil
+	schedule := s.state.Route.ScheduleEnabled
+	s.mu.Unlock()
+	return s.ConfigureController(context.Background(), probeKeyID, 0, active, schedule, "")
 }
 
-// ApplyRouting performs one atomic multi-key file update under the SAME
-// cross-process .lock used by Magpie's access.Update. A write-ahead marker
-// leaves crash recovery in an explicit blocked state rather than guessing.
-func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPreview, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if restore {
-		// Administrator reset takes precedence over every in-flight probe.
-		// Cancellation is immediate; stale results are invalidated by epoch.
-		s.preemptAccountProbesLocked()
+// Account lists are always recomputed from durable detection state. Temporary
+// model/group restrictions retain ownership only so they can be removed later.
+// If a previous transaction was interrupted, rebase against the current files
+// and converge automatically rather than asking for historical approval.
+func routingStateAfterInterruptedWrite(route RoutingState) RoutingState {
+	if !route.Pending {
+		return route
 	}
-	if !restore && !s.state.Route.AutoApply {
-		return RoutingPreview{}, errors.New("自动路由仍是观察模式，禁止修改生产 Key")
+	route.GroupOffBaselines = clonedScopes(route.GroupOffBaselines)
+	route.GroupOffExpected = clonedScopes(route.GroupOffExpected)
+	route.GroupOffMembers = clonedScopes(route.GroupOffMembers)
+	for id, base := range route.GroupOffNextBaselines {
+		route.GroupOffBaselines[id] = slices.Clone(base)
 	}
-	// Observation-only installs have never changed Magpie's routes. They
-	// should be able to clear monitoring state without even having a key file.
-	if restore && !hasManagedRoutes(s.state.Route) {
-		before, err := json.Marshal(s.state)
-		if err != nil {
-			return RoutingPreview{}, err
-		}
-		resetAllAccountMonitoringState(&s.state)
-		s.state.Route.LastApplied = time.Now()
-		s.state.Route.Audit = append(s.state.Route.Audit, RoutingAudit{At: s.state.Route.LastApplied, Action: "reset"})
-		if len(s.state.Route.Audit) > 100 {
-			s.state.Route.Audit = slices.Clone(s.state.Route.Audit[len(s.state.Route.Audit)-100:])
-		}
-		if err := s.saveLocked(); err != nil {
-			var previous State
-			if json.Unmarshal(before, &previous) == nil {
-				s.state = previous
-			}
-			return RoutingPreview{}, err
-		}
-		return RoutingPreview{Mode: "observe_only", ProbeKeyID: s.state.Route.ProbeKeyID}, nil
+	for id, expected := range route.GroupOffNextExpected {
+		route.GroupOffExpected[id] = slices.Clone(expected)
 	}
-	dir, err := MagpieDir()
-	if err != nil {
-		return RoutingPreview{}, err
+	for id, members := range route.GroupOffNextMembers {
+		route.GroupOffMembers[id] = slices.Clone(members)
 	}
-	lock := flock.New(filepath.Join(dir, "caller-keys.json.lock"))
-	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	held, err := lock.TryLockContext(waitCtx, 20*time.Millisecond)
-	if err != nil || !held {
-		return RoutingPreview{}, errors.New("无法取得 Magpie Gateway Key 文件锁，未进行路由更新")
-	}
-	defer lock.Unlock()
-	// Serialize Guard-owned updates of both Magpie configuration files.
-	// Magpie loads providers.json atomically; this extra lock prevents two
-	// Guard runs from racing and keeps the crash journal consistent.
-	providersLock := flock.New(filepath.Join(dir, "providers.json.lock"))
-	groupLocked, groupErr := providersLock.TryLockContext(waitCtx, 20*time.Millisecond)
-	if groupErr != nil || !groupLocked {
-		return RoutingPreview{}, errors.New("无法取得 Magpie Providers 文件锁，未进行路由更新")
-	}
-	defer providersLock.Unlock()
+	return route
+}
 
-	codex, rawKeys, keys, err := readRouterInputs(dir)
-	if err != nil {
-		return RoutingPreview{}, err
-	}
-	if !restore {
-		if err = verifyProbeKey(s.state, keys); err != nil {
-			return RoutingPreview{}, err
-		}
-		// A deletion-only administrator edit cannot widen access.
-		// Adopt it in the PRIVATE baseline after verifying all existing
-		// quarantines remain excluded. This does not write caller-keys.json.
-		if _, err := s.acceptSafeNarrowingsLocked(keys, codex); err != nil {
-			return RoutingPreview{}, err
-		}
-	}
-	var preview RoutingPreview
-	var baselines map[string][]string
-	var offBaselines map[string]bool
-	if restore {
-		preview, baselines, offBaselines, err = makeResetRoutingPreview(s.state, keys, codex)
-	} else {
-		preview, baselines, offBaselines, err = makeRoutingPreview(s.state, keys, codex)
-	}
-	if err != nil {
-		return RoutingPreview{}, err
-	}
-	groups, err := planRoutingGroupOff(dir, s.state.Route, codex, preview.Quarantined, restore)
-	if err != nil {
-		return RoutingPreview{}, err
-	}
-	after := map[string][]string{}
-	afterOff := map[string]bool{}
-	afterModels := map[string][]string{}
-	modelBaselines := map[string][]string{}
-	changed := false
-	for i, plan := range preview.Keys {
-		after[plan.KeyID] = slices.Clone(plan.After)
-		afterOff[plan.KeyID] = plan.OffAfter
-		afterModels[plan.KeyID] = slices.Clone(plan.ModelsAfter)
-		modelBaselines[plan.KeyID] = slices.Clone(plan.ModelsBaseline)
-		if !plan.Changed {
-			continue
-		}
-		changed = true
-		if len(plan.After) == 0 && len(preview.Quarantined) > 0 && !plan.OffAfter && len(heldAPIProviders(s.state)) == 0 {
-			providers, err := apiProviderNames(dir)
-			if err != nil {
-				return RoutingPreview{}, err
-			}
-			withoutCodex, safe := nonCodexModelScopes(plan.ModelsAfter, providers)
-			if !safe || !slices.Equal(withoutCodex, plan.ModelsAfter) {
-				return RoutingPreview{}, errors.New("隔离后空白名单将误放行全部账号，拒绝写入")
-			}
-		}
-		data, err := json.Marshal(plan.After)
-		if err != nil {
-			return RoutingPreview{}, err
-		}
-		rawKeys[i]["accounts"] = data
-		// Account quarantine must not rewrite an administrator's independent
-		// provider model picks. Preserve the original raw field if unchanged.
-		if !slices.Equal(keys[i].Models, plan.ModelsAfter) {
-			modelData, err := json.Marshal(plan.ModelsAfter)
-			if err != nil {
-				return RoutingPreview{}, err
-			}
-			rawKeys[i]["models"] = modelData
-		}
-		if plan.OffAfter {
-			rawKeys[i]["off"] = json.RawMessage("true")
-		} else {
-			rawKeys[i]["off"] = json.RawMessage("false")
-		}
-	}
-	if !changed && !groups.changed {
-		// A new key's baseline must be remembered even if it needs no
-		// rewrite. Avoid a pointless SQLite fsync every scheduler tick.
-		previous := s.state.Route
-		different := !maps.EqualFunc(previous.Baselines, baselines, slices.Equal) ||
-			!maps.EqualFunc(previous.Expected, after, slices.Equal)
-		if !maps.EqualFunc(previous.ModelBaselines, modelBaselines, slices.Equal) || !maps.EqualFunc(previous.ModelExpected, afterModels, slices.Equal) {
-			different = true
-		}
-		if !maps.Equal(previous.BaselineOff, offBaselines) || !maps.Equal(previous.ExpectedOff, afterOff) {
-			different = true
-		}
-		if !maps.EqualFunc(previous.GroupOffBaselines, groups.baselines, slices.Equal) ||
-			!maps.EqualFunc(previous.GroupOffExpected, groups.expected, slices.Equal) ||
-			!maps.EqualFunc(previous.GroupOffMembers, groups.members, slices.Equal) {
-			different = true
-		}
-		if !slices.Equal(sortedQuarantined(previous.Quarantined), preview.Quarantined) {
-			different = true
-		}
-		if restore && previous.AutoApply {
-			different = true
-		}
-		if previous.LastError != "" {
-			different = true
-		}
-		if !different && !restore {
-			return preview, nil
-		}
-		s.state.Route.Baselines = baselines
-		s.state.Route.Expected = after
-		s.state.Route.ModelBaselines = modelBaselines
-		s.state.Route.ModelExpected = afterModels
-		s.state.Route.BaselineOff = offBaselines
-		s.state.Route.ExpectedOff = afterOff
-		s.state.Route.GroupOffBaselines = groups.baselines
-		s.state.Route.GroupOffExpected = groups.expected
-		s.state.Route.GroupOffMembers = groups.members
-		s.state.Route.Quarantined = quarantineSet(preview.Quarantined)
-		s.state.Route.LastError = ""
-		if restore {
-			resetAllAccountMonitoringState(&s.state)
-			s.state.Route.LastApplied = time.Now()
-			s.state.Route.Audit = append(s.state.Route.Audit, RoutingAudit{
-				At: s.state.Route.LastApplied, Action: "reset", KeyCount: len(keys),
-			})
-			if len(s.state.Route.Audit) > 100 {
-				s.state.Route.Audit = slices.Clone(s.state.Route.Audit[len(s.state.Route.Audit)-100:])
-			}
-		}
-		return preview, s.saveLocked()
-	}
-
-	// Persist both the baseline and desired state BEFORE replacing Magpie's
-	// config, so interruption never silently forgets whom we quarantined.
-	route := &s.state.Route
-	route.Pending = true
-	route.PendingRestore = restore
-	route.Previous = make(map[string][]string, len(keys))
-	route.GroupOffPrevious = clonedScopes(groups.before)
-	route.GroupOffTarget = clonedScopes(groups.target)
-	route.GroupOffPendingMembers = clonedScopes(groups.pendingMembers)
-	route.GroupOffNextBaselines = clonedScopes(groups.baselines)
-	route.GroupOffNextExpected = clonedScopes(groups.expected)
-	route.GroupOffNextMembers = clonedScopes(groups.members)
-	route.PreviousOff = make(map[string]bool, len(keys))
-	route.ModelPrevious = make(map[string][]string, len(keys))
-	for _, k := range keys {
-		route.Previous[k.ID] = slices.Clone(k.Accounts)
-		route.PreviousOff[k.ID] = k.Off
-		route.ModelPrevious[k.ID] = slices.Clone(k.Models)
-	}
-	route.PendingQuarantine = slices.Clone(preview.Quarantined)
-	route.Baselines = baselines
-	route.Expected = after
-	route.ModelBaselines = modelBaselines
-	route.ModelExpected = afterModels
-	route.BaselineOff = offBaselines
-	route.ExpectedOff = afterOff
-	if err := s.store.Save(s.state); err != nil {
-		return RoutingPreview{}, err
-	}
-
-	b, err := json.MarshalIndent(rawKeys, "", "  ")
-	if err != nil {
-		route.LastError = "路由编码失败"
-		return RoutingPreview{}, err
-	}
-	path := filepath.Join(dir, "caller-keys.json")
-	if err = AtomicWrite(path, append(b, '\n')); err != nil {
-		route.LastError = "更新 Magpie Gateway Key 文件失败；需人工核实后继续"
-		_ = s.store.Save(s.state)
-		return RoutingPreview{}, err
-	}
-	// Verify immediately. The lock serializes Magpie administrative writes.
-	_, actual, err := loadKeyDocuments(path)
-	if err == nil {
-		if len(actual) != len(keys) {
-			err = errors.New("Gateway Key 写后数量改变")
-		}
-		for i, k := range actual {
-			if err == nil && (k.ID != keys[i].ID || !slices.Equal(k.Accounts, after[k.ID]) || k.Off != afterOff[k.ID] || !slices.Equal(k.Models, afterModels[k.ID])) {
-				err = errors.New("Gateway Key 写后验证失败")
-			}
-		}
-	}
-	if err != nil {
-		route.LastError = "路由更新验证失败，自动隔离已停止"
-		_ = s.store.Save(s.state)
-		return RoutingPreview{}, err
-	}
-	// Key permissions are already restrictive here. Only now change the
-	// global auto-group routing candidates. A crash leaves the journal
-	// pending, never silently restoring a quarantined Codex account.
-	if err := writeGroupOffDocument(dir, groups); err != nil {
-		route.LastError = "自动路由组更新失败；需恢复未完成的路由事务"
-		_ = s.store.Save(s.state)
-		return RoutingPreview{}, err
-	}
-	route.GroupOffBaselines = clonedScopes(groups.baselines)
-	route.GroupOffExpected = clonedScopes(groups.expected)
-	route.GroupOffMembers = clonedScopes(groups.members)
+func clearRoutingJournal(route *RoutingState) {
 	route.Pending = false
 	route.PendingRestore = false
 	route.Previous = nil
 	route.PreviousOff = nil
 	route.ModelPrevious = nil
+	route.PendingQuarantine = nil
 	route.GroupOffPrevious = nil
 	route.GroupOffTarget = nil
 	route.GroupOffPendingMembers = nil
 	route.GroupOffNextBaselines = nil
 	route.GroupOffNextExpected = nil
 	route.GroupOffNextMembers = nil
-	route.PendingQuarantine = nil
-	route.Quarantined = quarantineSet(preview.Quarantined)
+}
+
+// ApplyRouting is also the independent manual sync action. The scheduler only
+// calls it when AutoApply is enabled. restore is retained for old API callers
+// but now means reset monitoring ONLY, never restore historical permissions.
+func (s *Service) ApplyRouting(ctx context.Context, restore bool) (RoutingPreview, error) {
 	if restore {
-		resetAllAccountMonitoringState(&s.state)
+		return s.ResetAccountStates()
 	}
-	route.LastError = ""
-	route.LastApplied = time.Now()
-	action := "quarantine"
-	if restore {
-		action = "reset"
-	}
-	route.Audit = append(route.Audit, RoutingAudit{At: route.LastApplied, Action: action, KeyCount: len(after), Quarantined: slices.Clone(preview.Quarantined)})
-	if len(route.Audit) > 100 {
-		route.Audit = slices.Clone(route.Audit[len(route.Audit)-100:])
-	}
-	if err := s.store.Save(s.state); err != nil {
+	return s.applyRouting(ctx, false)
+}
+
+func (s *Service) applyAutomaticRouting(ctx context.Context) (RoutingPreview, error) {
+	return s.applyRouting(ctx, true)
+}
+
+func (s *Service) applyRouting(ctx context.Context, automatic bool) (RoutingPreview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Recheck cancellation/settings after acquiring the lock. A scheduler
+	// handoff queued before reset must not write pending-account permissions
+	// after reset, nor continue after the administrator disables automation.
+	if err := ctx.Err(); err != nil {
 		return RoutingPreview{}, err
 	}
+	if automatic && (!s.state.Route.AutoApply || s.state.Route.AwaitingDetection) {
+		return RoutingPreview{Mode: "awaiting_detection", ProbeKeyID: s.state.Route.ProbeKeyID}, nil
+	}
+	dir, err := MagpieDir()
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	wait, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	lock := flock.New(filepath.Join(dir, "caller-keys.json.lock"))
+	held, err := lock.TryLockContext(wait, 20*time.Millisecond)
+	if err != nil || !held {
+		return RoutingPreview{}, errors.New("无法取得 Magpie Gateway Key 文件锁，本次路由同步未执行")
+	}
+	defer lock.Unlock()
+	providersLock := flock.New(filepath.Join(dir, "providers.json.lock"))
+	held, err = providersLock.TryLockContext(wait, 20*time.Millisecond)
+	if err != nil || !held {
+		return RoutingPreview{}, errors.New("无法取得 Magpie Providers 文件锁，本次路由同步未执行")
+	}
+	defer providersLock.Unlock()
+	codex, rawKeys, keys, err := readRouterInputs(dir)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	keyPath := filepath.Join(dir, "caller-keys.json")
+	keyBytes, err := os.ReadFile(keyPath)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	keyHash := sha256.Sum256(keyBytes)
+	previous := s.state.Route
+	planning := s.state
+	planning.Route = routingStateAfterInterruptedWrite(previous)
+	preview, _, offBaselines, err := makeRoutingPreview(planning, keys, codex)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	groups, err := planRoutingGroupOff(dir, planning.Route, codex, preview.Excluded, false)
+	if err != nil {
+		return RoutingPreview{}, err
+	}
+	route := planning.Route
+	route.ExpectedCodexCount = 0
+	route.Baselines = nil // obsolete account-approval state
+	route.Expected = map[string][]string{}
+	route.BaselineOff, route.ExpectedOff = offBaselines, map[string]bool{}
+	route.ModelBaselines, route.ModelExpected = map[string][]string{}, map[string][]string{}
+	keysChanged := false
+	for i, plan := range preview.Keys {
+		route.Expected[plan.KeyID] = slices.Clone(plan.After)
+		route.ExpectedOff[plan.KeyID] = plan.OffAfter
+		route.ModelBaselines[plan.KeyID] = slices.Clone(plan.ModelsBaseline)
+		route.ModelExpected[plan.KeyID] = slices.Clone(plan.ModelsAfter)
+		if !plan.Changed {
+			continue
+		}
+		keysChanged = true
+		if !slices.Equal(keys[i].Accounts, plan.After) {
+			rawKeys[i]["accounts"], err = json.Marshal(plan.After)
+			if err != nil {
+				return RoutingPreview{}, err
+			}
+		}
+		if !slices.Equal(keys[i].Models, plan.ModelsAfter) {
+			rawKeys[i]["models"], err = json.Marshal(plan.ModelsAfter)
+			if err != nil {
+				return RoutingPreview{}, err
+			}
+		}
+		if keys[i].Off != plan.OffAfter {
+			rawKeys[i]["off"], _ = json.Marshal(plan.OffAfter)
+		}
+	}
+	changed := keysChanged || groups.changed
+	if changed {
+		route.Pending = true
+		route.PendingRestore = false
+		route.Previous, route.PreviousOff, route.ModelPrevious = map[string][]string{}, map[string]bool{}, map[string][]string{}
+		for _, k := range keys {
+			route.Previous[k.ID] = slices.Clone(k.Accounts)
+			route.PreviousOff[k.ID] = k.Off
+			route.ModelPrevious[k.ID] = slices.Clone(k.Models)
+		}
+		route.PendingQuarantine = slices.Clone(preview.Quarantined)
+		route.GroupOffPrevious = clonedScopes(groups.before)
+		route.GroupOffTarget = clonedScopes(groups.target)
+		route.GroupOffPendingMembers = clonedScopes(groups.pendingMembers)
+		route.GroupOffNextBaselines = clonedScopes(groups.baselines)
+		route.GroupOffNextExpected = clonedScopes(groups.expected)
+		route.GroupOffNextMembers = clonedScopes(groups.members)
+		s.state.Route = route
+		if err := s.store.Save(s.state); err != nil {
+			s.state.Route = previous
+			return RoutingPreview{}, err
+		}
+		if keysChanged {
+			current, err := os.ReadFile(keyPath)
+			if err != nil || sha256.Sum256(current) != keyHash {
+				return RoutingPreview{}, errors.New("Gateway Key 配置在同步期间改变，将按最新配置重试")
+			}
+			encoded, err := json.MarshalIndent(rawKeys, "", "  ")
+			if err != nil {
+				return RoutingPreview{}, err
+			}
+			if err := AtomicWrite(keyPath, append(encoded, '\n')); err != nil {
+				return RoutingPreview{}, err
+			}
+		}
+		_, actual, err := loadKeyDocuments(keyPath)
+		if err != nil {
+			return RoutingPreview{}, err
+		}
+		if len(actual) != len(keys) {
+			return RoutingPreview{}, errors.New("Gateway Key 写后数量改变")
+		}
+		for i, k := range actual {
+			if k.ID != keys[i].ID || !slices.Equal(k.Accounts, route.Expected[k.ID]) || k.Off != route.ExpectedOff[k.ID] || !slices.Equal(k.Models, route.ModelExpected[k.ID]) {
+				return RoutingPreview{}, errors.New("Gateway Key 写后验证失败，将保留事务并重试")
+			}
+		}
+		if err := writeGroupOffDocument(dir, groups); err != nil {
+			return RoutingPreview{}, err
+		}
+	}
+	pendingRoute := s.state.Route
+	clearRoutingJournal(&route)
+	route.GroupOffBaselines, route.GroupOffExpected, route.GroupOffMembers = clonedScopes(groups.baselines), clonedScopes(groups.expected), clonedScopes(groups.members)
+	route.Quarantined = quarantineSet(preview.Quarantined)
+	route.AwaitingDetection = false
+	route.LastError = ""
+	if changed {
+		route.LastApplied = time.Now()
+		route.Audit = append(slices.Clone(route.Audit), RoutingAudit{At: route.LastApplied, Action: "sync", KeyCount: len(keys), Quarantined: slices.Clone(preview.Quarantined)})
+		if len(route.Audit) > 100 {
+			route.Audit = slices.Clone(route.Audit[len(route.Audit)-100:])
+		}
+	}
+	if !reflect.DeepEqual(previous, route) || changed {
+		s.state.Route = route
+		if err := s.store.Save(s.state); err != nil {
+			s.state.Route = pendingRoute
+			return RoutingPreview{}, err
+		}
+	}
+	preview.Pending, preview.LastError = false, ""
 	return preview, nil
 }
 
-// sortedQuarantined returns stable IDs for display without any credentials.
 func sortedQuarantined(m map[string]bool) []string {
 	var ids []string
 	for id, on := range m {
@@ -676,137 +474,21 @@ func sortedQuarantined(m map[string]bool) []string {
 	return ids
 }
 func quarantineSet(ids []string) map[string]bool {
-	m := map[string]bool{}
+	out := map[string]bool{}
 	for _, id := range ids {
-		m[id] = true
+		out[id] = true
 	}
-	return m
+	return out
 }
 
-// RecoverRoutingJournal never writes the Gateway Key file. It is an
-// explicit operator action after an interrupted transaction. If the
-// file is neither exactly the before state nor exactly the target state,
-// recovery refuses to guess, preventing privilege widening.
+// Recovery is the same deterministic reconciliation as a normal sync. It
+// never requires an administrator to approve an old account allowlist.
 func (s *Service) RecoverRoutingJournal(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	route := &s.state.Route
-	if !route.Pending {
-		return "", errors.New("没有待恢复的路由操作")
-	}
-	dir, err := MagpieDir()
-	if err != nil {
+	if _, err := s.ApplyRouting(ctx, false); err != nil {
 		return "", err
 	}
-	lock := flock.New(filepath.Join(dir, "caller-keys.json.lock"))
-	wait, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	ok, err := lock.TryLockContext(wait, 20*time.Millisecond)
-	if err != nil || !ok {
-		return "", errors.New("无法取得 Magpie Gateway Key 文件锁")
-	}
-	defer lock.Unlock()
-	providersLock := flock.New(filepath.Join(dir, "providers.json.lock"))
-	groupLocked, groupErr := providersLock.TryLockContext(wait, 20*time.Millisecond)
-	if groupErr != nil || !groupLocked {
-		return "", errors.New("无法取得 Magpie Providers 文件锁")
-	}
-	defer providersLock.Unlock()
-	_, keys, err := loadKeyDocuments(filepath.Join(dir, "caller-keys.json"))
-	if err != nil {
-		return "", err
-	}
-	beforeOK, afterOK := len(keys) == len(route.Previous), len(keys) == len(route.Expected)
-	for _, k := range keys {
-		before, existsBefore := route.Previous[k.ID]
-		after, existsAfter := route.Expected[k.ID]
-		if !existsBefore || !slices.Equal(k.Accounts, before) || k.Off != route.PreviousOff[k.ID] {
-			beforeOK = false
-		}
-		if !existsAfter || !slices.Equal(k.Accounts, after) || k.Off != route.ExpectedOff[k.ID] {
-			afterOK = false
-		}
-		if models, ok := route.ModelPrevious[k.ID]; ok && !slices.Equal(k.Models, models) {
-			beforeOK = false
-		}
-		if models, ok := route.ModelExpected[k.ID]; ok && !slices.Equal(k.Models, models) {
-			afterOK = false
-		}
-	}
-	if !beforeOK && !afterOK {
-		return "", errors.New("路由状态混合或被外部更改，拒绝自动恢复；需要管理员人工核对")
-	}
-	groupBefore, groupAfter, err := groupOffJournalStatus(dir, *route)
-	if err != nil {
-		return "", err
-	}
-	if !groupBefore && !groupAfter {
-		return "", errors.New("路由组 Off 状态与事务记录不一致，拒绝自动恢复")
-	}
-	if afterOK && !groupAfter && groupBefore {
-		// The key restriction was applied before the group switch. Finish
-		// only the group update whose exact before image is still present.
-		if err := completeGroupOffJournal(dir, *route); err != nil {
-			return "", err
-		}
-		groupAfter = true
-	}
-	if (!afterOK || !groupAfter) && (!beforeOK || !groupBefore) {
-		return "", errors.New("Gateway Key 和路由组处于混合状态，拒绝自动恢复")
-	}
-	action := "completed"
-	completedReset := afterOK && groupAfter && route.PendingRestore
-	if afterOK && groupAfter {
-		route.Quarantined = quarantineSet(route.PendingQuarantine)
-		route.GroupOffBaselines = clonedScopes(route.GroupOffNextBaselines)
-		route.GroupOffExpected = clonedScopes(route.GroupOffNextExpected)
-		route.GroupOffMembers = clonedScopes(route.GroupOffNextMembers)
-	} else {
-		route.Expected = route.Previous
-		route.ExpectedOff = route.PreviousOff
-		route.ModelExpected = route.ModelPrevious
-		route.AutoApply = false
-		route.LastError = "上次写入未执行；已关闭自动隔离，需人工核对后重新开启"
-		action = "aborted"
-	}
-	route.Pending = false
-	route.PendingRestore = false
-	route.Previous = nil
-	route.PreviousOff = nil
-	route.ModelPrevious = nil
-	route.GroupOffPrevious = nil
-	route.GroupOffTarget = nil
-	route.GroupOffPendingMembers = nil
-	route.GroupOffNextBaselines = nil
-	route.GroupOffNextExpected = nil
-	route.GroupOffNextMembers = nil
-	route.PendingQuarantine = nil
-	if completedReset {
-		resetAllAccountMonitoringState(&s.state)
-	}
-	route.Audit = append(route.Audit, RoutingAudit{At: time.Now(), Action: "recover-" + action, KeyCount: len(keys), Quarantined: sortedQuarantined(route.Quarantined)})
-	if len(route.Audit) > 100 {
-		route.Audit = slices.Clone(route.Audit[len(route.Audit)-100:])
-	}
-	if err := s.store.Save(s.state); err != nil {
-		return "", err
-	}
-	return action, nil
+	return "reconciled", nil
 }
 
-// ConfigureExpectedAccountCount makes missing sign-ins fail closed rather
-// than silently removing accounts from the production pool.
-func (s *Service) ConfigureExpectedAccountCount(count int) error {
-	if count < 0 || count > 100 {
-		return errors.New("预期账号数量须在 0 到 100 之间")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	previous := s.state.Route.ExpectedCodexCount
-	s.state.Route.ExpectedCodexCount = count
-	if err := s.store.Save(s.state); err != nil {
-		s.state.Route.ExpectedCodexCount = previous
-		return err
-	}
-	return nil
-}
+// Retained for clients of earlier releases; no account-count gate remains.
+func (s *Service) ConfigureExpectedAccountCount(_ int) error { return nil }

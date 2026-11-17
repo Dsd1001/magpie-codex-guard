@@ -129,15 +129,11 @@ func CallAccount(ctx context.Context, c Config, model, account, prompt string) (
 	req.Header.Set("X-Magpie-Account", pinUser)
 	resp, err := probeClient.Do(req)
 	if err != nil {
-		return "", 0, err
+		return "", 0, classifyProbeTransportError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusNotFound {
-			return "", 0, &gatewayHTTPStatusError{status: http.StatusNotFound,
-				detail: "Magpie HTTP 404：模型路由不存在，或指定账号无法服务该模型；请检查 Codex 模型与账号权限"}
-		}
-		return "", 0, &gatewayHTTPStatusError{status: resp.StatusCode}
+		return "", 0, classifyProbeHTTPError(ctx, c, model, resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024+1))
 	if err != nil {

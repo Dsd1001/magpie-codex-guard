@@ -204,11 +204,11 @@ func TestFingerprintObjectiveUnknownReferenceIsNeutralAndMakesNoCalls(t *testing
 		t.Fatal("unknown reference model should not trigger requests")
 	}
 	target := s.state.AccountTargets[accountTargetID("aaa", model)]
-	if target.ConsecutiveFails != 0 || len(s.state.Holds) != 0 || target.State != "unavailable" {
+	if target.ConsecutiveFails != 0 || len(s.state.Holds) != 0 || target.State != "connection_error" {
 		t.Fatalf("missing reference was treated as wrong: %+v", target)
 	}
 	result := s.state.AccountResults[len(s.state.AccountResults)-1]
-	if result.Verdict != "unavailable" || result.Error == "" {
+	if result.Verdict != "connection_error" || result.Error == "" {
 		t.Fatalf("missing explicit configuration diagnosis: %+v", result)
 	}
 }
@@ -287,8 +287,8 @@ func TestFingerprintObjectiveProductionRoutingAndRecovery(t *testing.T) {
 	if !reflect.DeepEqual(keys["production"].Accounts, []string{"codex/bbb"}) {
 		t.Fatalf("production still allows held account: %v", keys["production"].Accounts)
 	}
-	if !keys["restricted"].Off || keys["probe"].Off {
-		t.Fatal("production isolation touched probe or left restricted key enabled")
+	if keys["restricted"].Off || keys["probe"].Off {
+		t.Fatal("production isolation touched probe or disabled another managed key")
 	}
 	if !s.state.Route.Quarantined["aaa"] {
 		t.Fatal("routing journal has no quarantine")
@@ -306,9 +306,8 @@ func TestFingerprintObjectiveProductionRoutingAndRecovery(t *testing.T) {
 		t.Fatal("two passing fingerprint rounds did not release hold")
 	}
 	keys = decodeKeyStates(t, path)
-	// The original production key was unrestricted (empty scope means all).
-	// Recovery must restore that EXACT pre-quarantine baseline.
-	if keys["production"].Off || len(keys["production"].Accounts) != 0 {
+	// Recovery selects all currently verified accounts, never an old whitelist.
+	if keys["production"].Off || !slices.Equal(keys["production"].Accounts, []string{"codex/aaa", "codex/bbb"}) {
 		t.Fatalf("production did not restore allowed identities: %+v", keys["production"])
 	}
 	if keys["restricted"].Off || keys["probe"].Off || !keys["alreadyoff"].Off {

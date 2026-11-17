@@ -18,11 +18,13 @@ import (
 
 type Config struct {
 	GatewayURL string `json:"gateway_url"`
-	GatewayKey string `json:"gateway_key,omitempty"`
+	GatewayKey string `json:"-"` // ephemeral per-round credential; old persisted gateway_key is ignored
+	ProbeKeyID string `json:"-"` // identifies the key used by this round
 	DailyLimit int    `json:"daily_limit"`
 }
 
 type AccountTarget struct {
+	RouteEligible          bool          `json:"route_eligible,omitempty"` // valid pass, retained through neutral retries; Holds always win
 	ConsecutiveUnavailable int           `json:"consecutive_unavailable,omitempty"`
 	UnavailablePrompt      string        `json:"unavailable_prompt,omitempty"`
 	Account                string        `json:"account"`
@@ -140,7 +142,7 @@ func New(dir, gate string) (*Service, error) {
 	}
 	s := &Service{dir: dir, gate: gate, store: store, running: map[string]bool{}, scheduleWake: make(chan struct{}, 1)}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.state = State{Config: Config{DailyLimit: 600}, TimingPolicy: DefaultTimingPolicy(), AccountTargets: map[string]*AccountTarget{}, AccountResults: []AccountResult{}, Holds: map[string]QuarantineHold{}, Alias: Secret(), Spent: map[string]int{}}
+	s.state = State{Config: Config{GatewayURL: defaultGatewayURL(), DailyLimit: 600}, TimingPolicy: DefaultTimingPolicy(), AccountTargets: map[string]*AccountTarget{}, AccountResults: []AccountResult{}, Holds: map[string]QuarantineHold{}, Alias: Secret(), Spent: map[string]int{}}
 	if err := store.Load(&s.state); err != nil {
 		store.Close()
 		return nil, err
@@ -166,6 +168,13 @@ func New(dir, gate string) (*Service, error) {
 	if s.state.Alias == "" {
 		s.state.Alias = Secret()
 	}
+	// Retire duplicate credentials and historical account-count approval gates.
+	s.state.Config.GatewayKey = ""
+	if strings.TrimSpace(s.state.Config.GatewayURL) == "" {
+		s.state.Config.GatewayURL = defaultGatewayURL()
+	}
+	s.state.Route.ExpectedCodexCount = 0
+	s.state.Route.AutoSyncAccounts = true
 	if s.state.Config.DailyLimit <= 0 {
 		s.state.Config.DailyLimit = 600
 	}
@@ -182,6 +191,9 @@ func New(dir, gate string) (*Service, error) {
 				store.Close()
 				return nil, err
 			}
+		}
+		if t.State == PhaseHealthy {
+			t.RouteEligible = true
 		}
 		if t.State == "checking" {
 			t.State = "unavailable"
@@ -324,17 +336,17 @@ func (s *Service) Snapshot() (State, string) {
 func (s *Service) Configure(c Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c.GatewayKey == "" {
-		c.GatewayKey = s.state.Config.GatewayKey
+	c.GatewayKey = ""
+	c.ProbeKeyID = ""
+	c.GatewayURL = strings.TrimSpace(c.GatewayURL)
+	if c.GatewayURL == "" {
+		c.GatewayURL = defaultGatewayURL()
 	}
 	if c.DailyLimit < 1 || c.DailyLimit > 10000 {
 		return errors.New("每日请求预算必须在 1 到 10000 之间")
 	}
 	if err := ValidateGateway(c.GatewayURL); err != nil {
 		return err
-	}
-	if strings.TrimSpace(c.GatewayKey) == "" {
-		return errors.New("必须配置专用检测 Gateway Key")
 	}
 	old := s.state.Config
 	s.state.Config = c
@@ -344,26 +356,19 @@ func (s *Service) Configure(c Config) error {
 	}
 	return nil
 }
-func (s *Service) reserveRequest() (Config, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cfg := s.state.Config
-	if cfg.GatewayURL == "" || cfg.GatewayKey == "" {
-		return cfg, errors.New("网关或检测 Key 尚未配置")
-	}
+func (s *Service) reserveBudgetLocked(limit int) error {
 	day := time.Now().UTC().Format("2006-01-02")
-	if s.state.Spent[day] >= cfg.DailyLimit {
-		return cfg, errors.New("每日检测请求预算已耗尽")
+	if s.state.Spent[day] >= limit {
+		return errors.New("每日检测请求预算已耗尽")
 	}
 	s.state.Spent[day]++
 	if err := s.store.Save(s.state); err != nil {
 		s.state.Spent[day]--
-		return cfg, err
+		return err
 	}
-	return cfg, nil
+	return nil
 }
 
 func (s *Service) reconcileOrphanHoldsLocked() {
-	// Never silently clear Holds on account deletion, login expiry, or rubric edits.
-	// An orphan hold blocks restore and requires explicit operator recovery.
+	// Keep deleted-account history without letting it block live roster sync.
 }

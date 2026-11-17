@@ -1,9 +1,9 @@
 {
   "name": "magpie-codex-guard",
-  "version": "0.1.0-alpha.32",
+  "version": "0.1.0-alpha.33",
   "type": "module",
   "main": "./plugin/index.mjs",
-  "description": "Fixed Codex and API upstream probes, local model fingerprints and safe Magpie Gateway Key quarantine.",
+  "description": "Automatic Codex account detection, quarantine and recovery with a single probe key and production route synchronization.",
   "scripts": {
     "test": "go test ./...",
     "build:linux": "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/codex-guard-linux-amd64 ./cmd/codex-guard",
