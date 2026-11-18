@@ -73,9 +73,9 @@ jobs:
             echo "Immutable alpha release already exists; preserving published checksums for $TAG"
           else
             sha256sum "$ARCHIVE" bin/codex-guard-* > dist/SHA256SUMS
-            gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.33: single dedicated probe Key, automatic Codex discovery and state-driven routing without whitelist/count approvals, independent cancel-and-reset, connection-fault protection, preserved multi-provider fallback, and automatic interrupted-write reconciliation. Includes frontend, lifecycle, credential-rotation and race regressions."
+            gh release create "$TAG" "$ARCHIVE" dist/SHA256SUMS --target "$(git rev-parse HEAD)" --title "$TAG" --prerelease --notes "Codex Guard alpha.34: pin Ikaleio/lm-detector at 7663b658 (2026-11-17), grow shared fingerprint bank from 64 to 72 models including GPT-6.2, and verify independent JavaScript/Go scoring parity. Detection and quarantine policy unchanged."
           fi
-      - name: Pin the just-published verified alpha.33 runtime in source installs
+      - name: Pin the just-published verified alpha.34 runtime in source installs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

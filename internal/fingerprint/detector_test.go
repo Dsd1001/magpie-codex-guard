@@ -12,8 +12,8 @@ func TestLoadOfficialArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Models()) != 64 {
-		t.Fatalf("want 64 models from upstream 2026-10-27, got %d", len(d.Models()))
+	if len(d.Models()) != 72 {
+		t.Fatalf("want 72 models from upstream 2026-11-17, got %d", len(d.Models()))
 	}
 	if canonicalExpected("codex/gpt-6.1-sol") != "gpt-6-astra" {
 		t.Fatal("merged-model alias broken")
@@ -25,7 +25,7 @@ func TestLoadOfficialArtifact(t *testing.T) {
 			t.Fatal("merged model label missing")
 		}
 	}
-	for _, id := range []string{"gpt-6.1-terra", "kimi-k3.1-pro", "gemini-3.5-flash-lite", "minimax-m3.1-flash"} {
+	for _, id := range []string{"gpt-6.1-terra", "kimi-k3.1-pro", "gemini-3.5-flash-lite", "minimax-m3.1-flash", "openpangu-2.0-flash", "openpangu-2.0-pro", "muse-ember", "claude-fable-5.2", "gemini-4-carbon", "gemini-4-hydrogen", "gpt-6.2-sol", "gpt-6.2-astra"} {
 		if !known[id] {
 			t.Fatalf("new upstream fingerprint model missing: %s", id)
 		}
